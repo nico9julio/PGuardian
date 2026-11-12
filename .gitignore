@@ -1,0 +1,56 @@
+# Binaries and Build Outputs
+build/bin/
+dist/
+*.exe
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+# Frontend dependencies & build output
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+frontend/package.json.md5
+*.tsbuildinfo
+
+# Secrets, Local Configs, Certificates & Environment Files (STRICT PUBLIC REPO PROTECTION)
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.pfx
+*.p12
+*secret*.json
+*secret*.txt
+*secret*.yaml
+*secret*.yml
+*credentials*.json
+client_secret*.json
+token*.json
+
+# Local Databases, Backups & Runtime State
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+*.backup
+*.dump
+*.sql.gz
+*.part
+*.bak
+data/
+logs/
+*.log
+
+# OS & IDE files
+.DS_Store
+Thumbs.db
+Desktop.ini
+.vscode/
+.idea/
+*.swp
+*.swo
