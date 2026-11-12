@@ -2,6 +2,7 @@ package updater
 
 import (
 	"archive/zip"
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -80,10 +81,15 @@ func ExtractAndVerifyBundle(zipPath, stagingBase string) (*Manifest, string, err
 			if err != nil {
 				return nil, "", err
 			}
-			var m Manifest
-			decErr := json.NewDecoder(io.LimitReader(rc, 1024*1024)).Decode(&m)
+			rawBytes, readErr := io.ReadAll(io.LimitReader(rc, 1024*1024))
 			_ = rc.Close()
-			if decErr != nil {
+			if readErr != nil {
+				return nil, "", fmt.Errorf("read manifest.json: %w", readErr)
+			}
+			// Strip optional UTF-8 BOM (EF BB BF) emitted by Windows PowerShell 5.1 Set-Content -Encoding UTF8
+			rawBytes = bytes.TrimPrefix(rawBytes, []byte{0xEF, 0xBB, 0xBF})
+			var m Manifest
+			if decErr := json.Unmarshal(rawBytes, &m); decErr != nil {
 				return nil, "", fmt.Errorf("invalid manifest.json: %w", decErr)
 			}
 			manifest = &m

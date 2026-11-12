@@ -46,7 +46,8 @@ foreach ($artifact in @("PGuardianSetup_v$Version.exe", "PGuardianUpdate_v$Versi
         $Lines += "$hash  $artifact"
     }
 }
-$Lines | Set-Content -Encoding UTF8 $ChecksumFile
+$Utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+[System.IO.File]::WriteAllLines($ChecksumFile, $Lines, $Utf8NoBom)
 
 Write-Host "`nAll artifacts built successfully in $DistDir :" -ForegroundColor Green
 Get-ChildItem $DistDir -File | Select-Object Name, Length

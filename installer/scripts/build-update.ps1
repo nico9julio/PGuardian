@@ -58,7 +58,9 @@ $ManifestObj = [ordered]@{
     files     = $FileHashes
 }
 $ManifestPath = Join-Path $BinDir "manifest.json"
-$ManifestObj | ConvertTo-Json -Depth 5 | Set-Content -Encoding UTF8 $ManifestPath
+$ManifestJson = $ManifestObj | ConvertTo-Json -Depth 5
+$Utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+[System.IO.File]::WriteAllText($ManifestPath, $ManifestJson, $Utf8NoBom)
 
 $ZipPath = Join-Path $DistDir "PGuardianUpdate_v$Version.zip"
 if (Test-Path $ZipPath) { Remove-Item $ZipPath -Force }

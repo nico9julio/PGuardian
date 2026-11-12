@@ -45,7 +45,24 @@ $CreateBody = @{
     prerelease = $false
 } | ConvertTo-Json
 
-$Release = Invoke-RestMethod -Method Post -Uri "https://api.github.com/repos/$Repo/releases" -Headers $Headers -Body $CreateBody -ContentType "application/json; charset=utf-8"
+$Release = $null
+try {
+    $Existing = Invoke-RestMethod -Method Get -Uri "https://api.github.com/repos/$Repo/releases/tags/$Tag" -Headers $Headers -ErrorAction Stop
+    if ($Existing -and $Existing.id) {
+        Write-Host "Updating existing GitHub Release $Tag (id=$($Existing.id))..." -ForegroundColor Yellow
+        $Release = Invoke-RestMethod -Method Patch -Uri "https://api.github.com/repos/$Repo/releases/$($Existing.id)" -Headers $Headers -Body $CreateBody -ContentType "application/json; charset=utf-8"
+        foreach ($oldAsset in $Existing.assets) {
+            Write-Host "Removing old asset $($oldAsset.name)..." -ForegroundColor DarkGray
+            Invoke-RestMethod -Method Delete -Uri "https://api.github.com/repos/$Repo/releases/assets/$($oldAsset.id)" -Headers $Headers | Out-Null
+        }
+    }
+} catch {
+    # Release for tag does not exist yet; create a new one below
+}
+
+if (-not $Release) {
+    $Release = Invoke-RestMethod -Method Post -Uri "https://api.github.com/repos/$Repo/releases" -Headers $Headers -Body $CreateBody -ContentType "application/json; charset=utf-8"
+}
 $UploadBase = "https://uploads.github.com/repos/$Repo/releases/$($Release.id)/assets"
 
 $Assets = @(

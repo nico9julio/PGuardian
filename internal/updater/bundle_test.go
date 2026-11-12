@@ -47,7 +47,9 @@ func TestExtractAndVerifyBundle(t *testing.T) {
 
 	mw, _ := zw.Create("manifest.json")
 	mBytes, _ := json.Marshal(manifest)
-	_, _ = mw.Write(mBytes)
+	// Include UTF-8 BOM prefix to ensure compatibility with PowerShell 5.1 generated files
+	bomWithJSON := append([]byte{0xEF, 0xBB, 0xBF}, mBytes...)
+	_, _ = mw.Write(bomWithJSON)
 
 	bw, _ := zw.Create("PGuardianService.exe")
 	_, _ = bw.Write(dummyPayload)
