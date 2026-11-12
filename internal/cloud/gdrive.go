@@ -269,6 +269,42 @@ func (s *Service) authorizedClient(ctx context.Context) (*http.Client, error) {
 	}, nil
 }
 
+// formatGoogleAPIError extracts a concise, human-readable message (and activation URL when applicable)
+// from a Google API JSON error body instead of dumping the entire raw JSON payload.
+func formatGoogleAPIError(prefix string, statusCode int, body []byte) error {
+	var parsed struct {
+		Error struct {
+			Message string `json:"message"`
+			Status  string `json:"status"`
+			Details []struct {
+				Reason   string            `json:"reason"`
+				Metadata map[string]string `json:"metadata"`
+			} `json:"details"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(body, &parsed); err == nil && parsed.Error.Message != "" {
+		msg := strings.TrimSpace(parsed.Error.Message)
+		for _, d := range parsed.Error.Details {
+			if d.Reason == "SERVICE_DISABLED" {
+				actURL := d.Metadata["activationUrl"]
+				proj := d.Metadata["containerInfo"]
+				if actURL != "" {
+					return fmt.Errorf("%s (HTTP %d - SERVICE_DISABLED): Google Drive API is disabled in Google Cloud project %s. Enable it at: %s", prefix, statusCode, proj, actURL)
+				}
+			}
+		}
+		return fmt.Errorf("%s (HTTP %d): %s", prefix, statusCode, msg)
+	}
+	raw := strings.TrimSpace(string(body))
+	if len(raw) > 400 {
+		raw = raw[:400] + "..."
+	}
+	if raw == "" {
+		return fmt.Errorf("%s (HTTP %d)", prefix, statusCode)
+	}
+	return fmt.Errorf("%s (HTTP %d): %s", prefix, statusCode, raw)
+}
+
 func (s *Service) fetchAccountEmail(ctx context.Context) (string, error) {
 	cli, err := s.authorizedClient(ctx)
 	if err != nil {
@@ -286,6 +322,10 @@ func (s *Service) fetchAccountEmail(ctx context.Context) (string, error) {
 		_, _ = io.Copy(io.Discard, resp.Body)
 		_ = resp.Body.Close()
 	}()
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return "", formatGoogleAPIError("drive about", resp.StatusCode, b)
+	}
 	var out struct {
 		User struct {
 			EmailAddress string `json:"emailAddress"`
@@ -324,8 +364,8 @@ func (s *Service) ListFolders(ctx context.Context, parentID string) ([]DriveFold
 		_ = resp.Body.Close()
 	}()
 	if resp.StatusCode != http.StatusOK {
-		b, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
-		return nil, fmt.Errorf("drive list folders HTTP %d: %s", resp.StatusCode, string(b))
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, 8192))
+		return nil, formatGoogleAPIError("drive list folders", resp.StatusCode, b)
 	}
 
 	var parsed struct {
@@ -398,8 +438,8 @@ func (s *Service) CreateFolder(ctx context.Context, parentID, name string) (Driv
 		_ = resp.Body.Close()
 	}()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		b, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
-		return DriveFolder{}, fmt.Errorf("drive create folder HTTP %d: %s", resp.StatusCode, string(b))
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, 8192))
+		return DriveFolder{}, formatGoogleAPIError("drive create folder", resp.StatusCode, b)
 	}
 
 	var created DriveFolder
@@ -462,12 +502,13 @@ func (s *Service) UploadBackupFile(ctx context.Context, baseFolderID, dbName, lo
 	if err != nil {
 		return "", fmt.Errorf("initiate resumable upload: %w", err)
 	}
+	if initResp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(io.LimitReader(initResp.Body, 8192))
+		_ = initResp.Body.Close()
+		return "", formatGoogleAPIError("drive resumable init", initResp.StatusCode, b)
+	}
 	_, _ = io.Copy(io.Discard, initResp.Body)
 	_ = initResp.Body.Close()
-
-	if initResp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("drive resumable init returned HTTP %d", initResp.StatusCode)
-	}
 	sessionURI := initResp.Header.Get("Location")
 	if sessionURI == "" {
 		return "", errors.New("missing resumable session URI from Google Drive")
@@ -513,7 +554,7 @@ func (s *Service) UploadBackupFile(ctx context.Context, baseFolderID, dbName, lo
 			return uploaded.ID, nil
 		}
 		if putResp.StatusCode != 308 { // 308 Resume Incomplete
-			return "", fmt.Errorf("drive chunk upload HTTP %d: %s", putResp.StatusCode, string(respBytes))
+			return "", formatGoogleAPIError("drive chunk upload", putResp.StatusCode, respBytes)
 		}
 
 		offset += int64(n)

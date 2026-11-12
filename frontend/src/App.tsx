@@ -14,6 +14,7 @@ import {
   Moon,
   Monitor,
   WifiOff,
+  X,
 } from 'lucide-react';
 import { apiCall, setAuthToken } from './lib/bridge';
 import { AppProvider, useApp } from './context/AppContext';
@@ -32,7 +33,7 @@ import { SettingsView } from './pages/SettingsView';
 type Tab = 'dashboard' | 'databases' | 'profiles' | 'servers' | 'cloud' | 'notifications' | 'updates' | 'settings';
 
 const Shell: React.FC = () => {
-  const { lang, setLang, theme, setTheme, t, bannerAlert } = useApp();
+  const { lang, setLang, theme, setTheme, t, bannerAlert, dismissBanner } = useApp();
   const [bootState, setBootState] = useState<'loading' | 'offline' | 'wizard' | 'locked' | 'unlocked'>('loading');
   const [version, setVersion] = useState('0.1.0');
   const [tab, setTab] = useState<Tab>('dashboard');
@@ -181,7 +182,7 @@ const Shell: React.FC = () => {
       <main className="flex-1 overflow-y-auto p-8 relative">
         {bannerAlert && (
           <div
-            className={`mb-5 px-4 py-3 rounded-xl border text-xs font-semibold shadow-sm ${
+            className={`mb-5 px-4 py-3 rounded-xl border text-xs font-semibold shadow-sm flex items-start justify-between gap-3 ${
               bannerAlert.severity === 'error'
                 ? 'bg-red-500/10 border-red-500/30 text-red-500'
                 : bannerAlert.severity === 'success'
@@ -191,7 +192,15 @@ const Shell: React.FC = () => {
                 : 'bg-cyan-500/10 border-cyan-500/30 text-cyan-600 dark:text-cyan-400'
             }`}
           >
-            {bannerAlert.text}
+            <div className="max-h-28 overflow-y-auto break-words flex-1 leading-relaxed">{bannerAlert.text}</div>
+            <button
+              type="button"
+              onClick={dismissBanner}
+              className="shrink-0 p-1 rounded-lg hover:bg-black/10 dark:hover:bg-white/10 transition"
+              title={t('cancel')}
+            >
+              <X className="w-4 h-4" />
+            </button>
           </div>
         )}
 

@@ -66,15 +66,24 @@ export const CloudView: React.FC = () => {
         onSubmit={handleSaveCreds}
         className="p-6 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 space-y-4"
       >
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between flex-wrap gap-2">
           <h3 className="font-bold text-sm">{t('cloudCredsCard')}</h3>
-          <button
-            type="button"
-            onClick={() => nativeBridge.openURL('https://console.cloud.google.com/apis/credentials')}
-            className="text-xs text-cyan-500 hover:underline flex items-center gap-1"
-          >
-            Google Cloud Console <ExternalLink className="w-3 h-3" />
-          </button>
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={() => nativeBridge.openURL('https://console.cloud.google.com/apis/library/drive.googleapis.com')}
+              className="text-xs text-emerald-600 dark:text-emerald-400 hover:underline flex items-center gap-1 font-medium"
+            >
+              {lang === 'es' ? 'Habilitar Drive API' : 'Enable Drive API'} <ExternalLink className="w-3 h-3" />
+            </button>
+            <button
+              type="button"
+              onClick={() => nativeBridge.openURL('https://console.cloud.google.com/apis/credentials')}
+              className="text-xs text-cyan-500 hover:underline flex items-center gap-1"
+            >
+              Google Cloud Console <ExternalLink className="w-3 h-3" />
+            </button>
+          </div>
         </div>
 
         <p className="text-xs text-slate-500">

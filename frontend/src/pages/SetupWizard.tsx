@@ -11,10 +11,14 @@ import {
   ChevronLeft,
   FolderOpen,
   RefreshCw,
+  X,
 } from 'lucide-react';
 import { apiCall, DriveStatus, formatBytes, nativeBridge, ServerUserSession, setAuthToken } from '../lib/bridge';
 import { useApp } from '../context/AppContext';
 import { DriveFolderModal } from '../components/DriveFolderModal';
+import { TelegramGuide } from '../components/TelegramGuide';
+import { ScheduleBuilder } from '../components/ScheduleBuilder';
+import { describeCron } from '../lib/scheduleUtils';
 
 interface Props {
   onComplete: () => void;
@@ -191,7 +195,7 @@ export const SetupWizard: React.FC<Props> = ({ onComplete }) => {
           name: profName,
           enabled: true,
           scheduleCron: profCron,
-          scheduleLabel: profCron,
+          scheduleLabel: describeCron(profCron, lang),
           format: profFormat,
           selectionMode: selMode,
           includedDatabases: selMode === 'manual' ? selectedDBs : [],
@@ -266,10 +270,17 @@ export const SetupWizard: React.FC<Props> = ({ onComplete }) => {
           })}
         </div>
 
-        <div className="p-8 min-h-[370px]">
+        <div className="p-8 min-h-[370px] max-h-[65vh] overflow-y-auto">
           {err && (
-            <div className="mb-5 p-3.5 rounded-xl bg-red-500/10 border border-red-500/30 text-red-500 text-xs font-medium">
-              {err}
+            <div className="mb-5 p-3.5 rounded-xl bg-red-500/10 border border-red-500/30 text-red-500 text-xs font-medium flex items-start justify-between gap-2">
+              <div className="max-h-28 overflow-y-auto break-words flex-1 leading-relaxed">{err}</div>
+              <button
+                type="button"
+                onClick={() => setErr('')}
+                className="shrink-0 p-1 rounded hover:bg-red-500/20 text-red-500"
+              >
+                <X className="w-4 h-4" />
+              </button>
             </div>
           )}
 
@@ -516,9 +527,10 @@ export const SetupWizard: React.FC<Props> = ({ onComplete }) => {
           )}
 
           {step === 5 && (
-            <div className="grid grid-cols-2 gap-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <div className="space-y-3">
                 <h3 className="text-sm font-semibold">{t('notifTelegramCard')}</h3>
+                <TelegramGuide compact />
                 <input
                   type="password"
                   value={tgToken}
@@ -582,105 +594,98 @@ export const SetupWizard: React.FC<Props> = ({ onComplete }) => {
           )}
 
           {step === 6 && (
-            <div className="grid grid-cols-2 gap-6">
-              <div className="space-y-3">
-                <div>
-                  <label className="block text-xs font-semibold mb-1">{t('profName')}</label>
-                  <input
-                    value={profName}
-                    onChange={(e) => setProfName(e.target.value)}
-                    className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-sm"
-                  />
-                </div>
-                <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="space-y-3">
                   <div>
-                    <label className="block text-xs font-semibold mb-1">{t('profSchedulePreset')}</label>
-                    <select
-                      value={profCron}
-                      onChange={(e) => setProfCron(e.target.value)}
-                      className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-xs"
-                    >
-                      <option value="0 */2 * * *">Cada 2 horas / Every 2h</option>
-                      <option value="0 */6 * * *">Cada 6 horas / Every 6h</option>
-                      <option value="0 2 * * *">Diario 02:00 AM / Daily 02:00</option>
-                      <option value="0 13,21 * * *">13:00 & 21:00</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-xs font-semibold mb-1">{t('profFormat')}</label>
-                    <select
-                      value={profFormat}
-                      onChange={(e) => setProfFormat(e.target.value as 'custom' | 'plain_gz')}
-                      className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-xs"
-                    >
-                      <option value="custom">Custom (-Fc .backup)</option>
-                      <option value="plain_gz">SQL Gzip (.sql.gz)</option>
-                    </select>
-                  </div>
-                </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-xs font-semibold mb-1">{t('profLocalRet')} (copias)</label>
+                    <label className="block text-xs font-semibold mb-1">{t('profName')}</label>
                     <input
-                      type="number"
-                      min={1}
-                      value={localKeep}
-                      onChange={(e) => setLocalKeep(Number(e.target.value))}
-                      className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-xs"
+                      value={profName}
+                      onChange={(e) => setProfName(e.target.value)}
+                      className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-sm"
                     />
                   </div>
-                  <div>
-                    <label className="block text-xs font-semibold mb-1">{t('profDriveRet')} (copias)</label>
-                    <input
-                      type="number"
-                      min={1}
-                      value={driveKeep}
-                      onChange={(e) => setDriveKeep(Number(e.target.value))}
-                      className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-xs"
-                    />
+                  <div className="grid grid-cols-3 gap-3">
+                    <div>
+                      <label className="block text-xs font-semibold mb-1">{t('profFormat')}</label>
+                      <select
+                        value={profFormat}
+                        onChange={(e) => setProfFormat(e.target.value as 'custom' | 'plain_gz')}
+                        className="w-full px-2.5 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-xs"
+                      >
+                        <option value="custom">Custom (-Fc .backup)</option>
+                        <option value="plain_gz">SQL Gzip (.sql.gz)</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold mb-1">{t('profLocalRet')}</label>
+                      <input
+                        type="number"
+                        min={1}
+                        value={localKeep}
+                        onChange={(e) => setLocalKeep(Number(e.target.value))}
+                        className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-xs"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold mb-1">{t('profDriveRet')}</label>
+                      <input
+                        type="number"
+                        min={1}
+                        value={driveKeep}
+                        onChange={(e) => setDriveKeep(Number(e.target.value))}
+                        className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-xs"
+                      />
+                    </div>
                   </div>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="block text-xs font-semibold">{t('profSelectionMode')}</label>
+                  <select
+                    value={selMode}
+                    onChange={(e) => setSelMode(e.target.value as 'manual' | 'all_auto')}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-xs"
+                  >
+                    <option value="manual">{t('profModeManual')}</option>
+                    <option value="all_auto">{t('profModeAutoAll')}</option>
+                  </select>
+
+                  {selMode === 'manual' && (
+                    <div className="max-h-32 overflow-y-auto rounded-xl border border-slate-200 dark:border-slate-800 divide-y divide-slate-100 dark:divide-slate-800">
+                      {previewDBs.length === 0 ? (
+                        <div className="p-3 text-xs text-slate-400">
+                          {lang === 'es' ? 'Prueba la conexión en el Paso 2 para listar bases.' : 'Test connection in Step 2 to list databases.'}
+                        </div>
+                      ) : (
+                        previewDBs.map((d) => (
+                          <label key={d.name} className="px-3 py-2 flex items-center justify-between text-xs cursor-pointer">
+                            <span>
+                              <b>{d.name}</b> <span className="text-slate-400">({formatBytes(d.sizeBytes)})</span>
+                            </span>
+                            <input
+                              type="checkbox"
+                              checked={selectedDBs.includes(d.name)}
+                              onChange={(e) =>
+                                setSelectedDBs((prev) =>
+                                  e.target.checked ? [...prev, d.name] : prev.filter((x) => x !== d.name),
+                                )
+                              }
+                              className="accent-cyan-600"
+                            />
+                          </label>
+                        ))
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
 
-              <div className="space-y-2">
-                <label className="block text-xs font-semibold">{t('profSelectionMode')}</label>
-                <select
-                  value={selMode}
-                  onChange={(e) => setSelMode(e.target.value as 'manual' | 'all_auto')}
-                  className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-xs"
-                >
-                  <option value="manual">{t('profModeManual')}</option>
-                  <option value="all_auto">{t('profModeAutoAll')}</option>
-                </select>
-
-                {selMode === 'manual' && (
-                  <div className="max-h-40 overflow-y-auto rounded-xl border border-slate-200 dark:border-slate-800 divide-y divide-slate-100 dark:divide-slate-800">
-                    {previewDBs.length === 0 ? (
-                      <div className="p-3 text-xs text-slate-400">
-                        {lang === 'es' ? 'Prueba la conexión en el Paso 2 para listar bases.' : 'Test connection in Step 2 to list databases.'}
-                      </div>
-                    ) : (
-                      previewDBs.map((d) => (
-                        <label key={d.name} className="px-3 py-2 flex items-center justify-between text-xs cursor-pointer">
-                          <span>
-                            <b>{d.name}</b> <span className="text-slate-400">({formatBytes(d.sizeBytes)})</span>
-                          </span>
-                          <input
-                            type="checkbox"
-                            checked={selectedDBs.includes(d.name)}
-                            onChange={(e) =>
-                              setSelectedDBs((prev) =>
-                                e.target.checked ? [...prev, d.name] : prev.filter((x) => x !== d.name),
-                              )
-                            }
-                            className="accent-cyan-600"
-                          />
-                        </label>
-                      ))
-                    )}
-                  </div>
-                )}
-              </div>
+              <ScheduleBuilder
+                value={profCron}
+                compact
+                onChange={(cronExpr) => setProfCron(cronExpr)}
+              />
             </div>
           )}
         </div>

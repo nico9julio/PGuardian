@@ -1,8 +1,10 @@
 import React, { useEffect, useState } from 'react';
-import { Plus, Play, Trash2, Edit3, Folder, Check } from 'lucide-react';
+import { Plus, Play, Trash2, Edit3, Folder, Check, Clock } from 'lucide-react';
 import { apiCall, BackupProfile, formatBytes, PGServer } from '../lib/bridge';
 import { useApp } from '../context/AppContext';
 import { DriveFolderModal } from '../components/DriveFolderModal';
+import { ScheduleBuilder } from '../components/ScheduleBuilder';
+import { describeCron } from '../lib/scheduleUtils';
 
 const emptyProfile = (defaultServerId: number): BackupProfile => ({
   id: 0,
@@ -133,8 +135,14 @@ export const ProfilesView: React.FC = () => {
                     </span>
                   </div>
                   <p className="text-xs text-slate-500 mt-0.5">
-                    {p.serverName} • Cron: <code className="text-cyan-600 dark:text-cyan-400">{p.scheduleCron}</code> •{' '}
-                    {p.format === 'plain_gz' ? '.sql.gz' : '-Fc .backup'}
+                    {p.serverName} • {p.format === 'plain_gz' ? '.sql.gz' : '-Fc .backup'}
+                  </p>
+                  <p className="text-xs text-cyan-700 dark:text-cyan-400 font-medium mt-1 flex items-center gap-1.5">
+                    <Clock className="w-3.5 h-3.5 shrink-0" />
+                    <span>{describeCron(p.scheduleCron, lang)}</span>
+                    <code className="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-500 font-mono">
+                      {p.scheduleCron}
+                    </code>
                   </p>
                 </div>
                 <div className="flex gap-1">
@@ -250,35 +258,12 @@ export const ProfilesView: React.FC = () => {
             </div>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-xs font-semibold mb-1">{t('profSchedulePreset')}</label>
-              <select
-                onChange={(e) => {
-                  if (e.target.value) setEditing({ ...editing, scheduleCron: e.target.value });
-                }}
-                value=""
-                className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-xs"
-              >
-                <option value="">-- Elegir preset / Pick preset --</option>
-                <option value="0 * * * *">Cada hora / Hourly (0 * * * *)</option>
-                <option value="0 */4 * * *">Cada 4 horas / Every 4h (0 */4 * * *)</option>
-                <option value="0 */6 * * *">Cada 6 horas / Every 6h (0 */6 * * *)</option>
-                <option value="0 2 * * *">Diario 02:00 AM / Daily 02:00 (0 2 * * *)</option>
-                <option value="0 13,21 * * *">Mediodía y Noche (13:00 & 21:00)</option>
-                <option value="0 3 * * 0">Semanal Domingo 03:00 AM</option>
-              </select>
-            </div>
-            <div>
-              <label className="block text-xs font-semibold mb-1">{t('profCronCustom')}</label>
-              <input
-                required
-                value={editing.scheduleCron}
-                onChange={(e) => setEditing({ ...editing, scheduleCron: e.target.value })}
-                className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-xs font-mono"
-              />
-            </div>
-          </div>
+          <ScheduleBuilder
+            value={editing.scheduleCron}
+            onChange={(cronExpr, humanLabel) =>
+              setEditing({ ...editing, scheduleCron: cronExpr, scheduleLabel: humanLabel })
+            }
+          />
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-2">
             <div className="space-y-3 p-4 rounded-xl bg-slate-50 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800">

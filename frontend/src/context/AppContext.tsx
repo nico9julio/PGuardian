@@ -11,6 +11,7 @@ interface AppContextValue {
   liveJob: LiveEvent | null;
   bannerAlert: { text: string; severity: 'info' | 'success' | 'warning' | 'error' } | null;
   notifyBanner: (text: string, severity?: 'info' | 'success' | 'warning' | 'error') => void;
+  dismissBanner: () => void;
   eventTick: number;
 }
 
@@ -38,10 +39,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const notifyBanner = (text: string, severity: 'info' | 'success' | 'warning' | 'error' = 'info') => {
     setBannerAlert({ text, severity });
+    const timeoutMs = severity === 'error' ? 12000 : 4500;
     setTimeout(() => {
       setBannerAlert((prev) => (prev?.text === text ? null : prev));
-    }, 4500);
+    }, timeoutMs);
   };
+
+  const dismissBanner = () => setBannerAlert(null);
 
   useEffect(() => {
     const unsub = nativeBridge.onEvent((ev) => {
@@ -61,7 +65,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const t = (key: TranslationKey): string => dict[lang][key] ?? key;
 
   return (
-    <AppContext.Provider value={{ lang, setLang, t, theme, setTheme, liveJob, bannerAlert, notifyBanner, eventTick }}>
+    <AppContext.Provider
+      value={{ lang, setLang, t, theme, setTheme, liveJob, bannerAlert, notifyBanner, dismissBanner, eventTick }}
+    >
       {children}
     </AppContext.Provider>
   );

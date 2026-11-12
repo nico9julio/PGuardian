@@ -1,10 +1,11 @@
 import React, { useEffect, useState } from 'react';
-import { Bell, Send, Users, Trash2, Plus, RefreshCw } from 'lucide-react';
-import { apiCall, NotificationRule, ServerUserSession, TelegramRecipient } from '../lib/bridge';
+import { Bell, Send, Users, Trash2, Plus, RefreshCw, ExternalLink } from 'lucide-react';
+import { apiCall, nativeBridge, NotificationRule, ServerUserSession, TelegramRecipient } from '../lib/bridge';
 import { useApp } from '../context/AppContext';
+import { TelegramGuide } from '../components/TelegramGuide';
 
 export const NotificationsView: React.FC = () => {
-  const { t, notifyBanner } = useApp();
+  const { lang, t, notifyBanner } = useApp();
   const [rules, setRules] = useState<NotificationRule[]>([]);
   const [winUsers, setWinUsers] = useState<ServerUserSession[]>([]);
   const [recipients, setRecipients] = useState<TelegramRecipient[]>([]);
@@ -12,6 +13,7 @@ export const NotificationsView: React.FC = () => {
   const [botToken, setBotToken] = useState('');
   const [newChatId, setNewChatId] = useState('');
   const [newChatLabel, setNewChatLabel] = useState('');
+  const [detectedChats, setDetectedChats] = useState<{ chatId: string; title: string; type?: string }[]>([]);
 
   const load = async () => {
     try {
@@ -68,14 +70,33 @@ export const NotificationsView: React.FC = () => {
 
   const detectChats = async () => {
     try {
-      const chats = await apiCall<{ chatId: string; title: string }[]>('POST', '/api/v1/notifications/telegram-detect', {
-        botToken,
-      });
+      if (botToken.trim()) {
+        await apiCall('POST', '/api/v1/notifications/telegram-token', { botToken: botToken.trim() });
+        setBotToken('');
+        setHasToken(true);
+      }
+      const chats = await apiCall<{ chatId: string; title: string; type?: string }[]>(
+        'POST',
+        '/api/v1/notifications/telegram-detect',
+        { botToken: botToken.trim() },
+      );
+      setDetectedChats(chats);
       if (chats.length > 0) {
         setNewChatId(chats[0].chatId);
         setNewChatLabel(chats[0].title || 'Telegram Chat');
+        notifyBanner(
+          lang === 'es'
+            ? `Se detectaron ${chats.length} chat(s). Haz clic en + para agregarlo.`
+            : `Detected ${chats.length} chat(s). Click + to add.`,
+          'success',
+        );
       } else {
-        notifyBanner('Send /start to your bot first, then click detect again.', 'warning');
+        notifyBanner(
+          lang === 'es'
+            ? 'No se encontraron mensajes recientes. Abre tu bot en Telegram, envíale /start y vuelve a pulsar Autodetectar.'
+            : 'No recent messages found. Open your bot in Telegram, send /start, and click Detect again.',
+          'warning',
+        );
       }
     } catch (e) {
       notifyBanner(e instanceof Error ? e.message : String(e), 'error');
@@ -239,13 +260,25 @@ export const NotificationsView: React.FC = () => {
         </div>
 
         <div className="p-6 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 space-y-4">
-          <h3 className="font-bold text-sm">{t('notifTelegramCard')}</h3>
+          <div className="flex items-center justify-between gap-2">
+            <h3 className="font-bold text-sm">{t('notifTelegramCard')}</h3>
+            <button
+              type="button"
+              onClick={() => void nativeBridge.openURL('https://t.me/BotFather')}
+              className="text-xs text-sky-600 dark:text-sky-400 hover:underline flex items-center gap-1 font-medium"
+            >
+              @BotFather <ExternalLink className="w-3 h-3" />
+            </button>
+          </div>
+
+          <TelegramGuide defaultOpen={!hasToken && recipients.length === 0} />
+
           <div className="flex gap-2">
             <input
               type="password"
               value={botToken}
               onChange={(e) => setBotToken(e.target.value)}
-              placeholder={hasToken ? 'Bot Token guardado en DPAPI (ingresa nuevo para reemplazar)' : '123456:ABC-DEF...'}
+              placeholder={hasToken ? 'Bot Token guardado en DPAPI ✓ (ingresa nuevo para reemplazar)' : '123456:ABC-DEF...'}
               className="flex-1 px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-xs font-mono"
             />
             <button
@@ -266,23 +299,48 @@ export const NotificationsView: React.FC = () => {
             <input
               value={newChatLabel}
               onChange={(e) => setNewChatLabel(e.target.value)}
-              placeholder="Label (ej. Grupo Soporte)"
+              placeholder={lang === 'es' ? 'Etiqueta (ej. Grupo Soporte)' : 'Label (e.g. Ops Group)'}
               className="flex-1 px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-xs"
             />
             <button
               onClick={detectChats}
-              className="px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 text-xs font-medium"
+              className="px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-xs font-medium whitespace-nowrap"
             >
-              Detect
+              {lang === 'es' ? 'Autodetectar' : 'Detect'}
             </button>
             <button
               onClick={addRecipient}
-              className="p-2 rounded-xl bg-cyan-600 text-white"
+              className="p-2 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white"
               title="Add Chat ID"
             >
               <Plus className="w-4 h-4" />
             </button>
           </div>
+
+          {detectedChats.length > 1 && (
+            <div className="flex items-center gap-2 text-xs">
+              <span className="text-slate-500 shrink-0">
+                {lang === 'es' ? 'Chats detectados:' : 'Detected chats:'}
+              </span>
+              <select
+                value={newChatId}
+                onChange={(e) => {
+                  const picked = detectedChats.find((c) => c.chatId === e.target.value);
+                  if (picked) {
+                    setNewChatId(picked.chatId);
+                    setNewChatLabel(picked.title || 'Telegram Chat');
+                  }
+                }}
+                className="flex-1 px-2.5 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-xs"
+              >
+                {detectedChats.map((c) => (
+                  <option key={c.chatId} value={c.chatId}>
+                    {c.title} ({c.chatId})
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
 
           <div className="divide-y divide-slate-100 dark:divide-slate-800 rounded-xl border border-slate-200 dark:border-slate-800">
             {recipients.map((r) => (

@@ -110,6 +110,24 @@ func (t *TelegramClient) DetectChats(ctx context.Context, botToken string) ([]De
 					LastName  string `json:"last_name"`
 				} `json:"chat"`
 			} `json:"message"`
+			ChannelPost *struct {
+				Chat struct {
+					ID       int64  `json:"id"`
+					Type     string `json:"type"`
+					Title    string `json:"title"`
+					Username string `json:"username"`
+				} `json:"chat"`
+			} `json:"channel_post"`
+			MyChatMember *struct {
+				Chat struct {
+					ID        int64  `json:"id"`
+					Type      string `json:"type"`
+					Title     string `json:"title"`
+					Username  string `json:"username"`
+					FirstName string `json:"first_name"`
+					LastName  string `json:"last_name"`
+				} `json:"chat"`
+			} `json:"my_chat_member"`
 		} `json:"result"`
 	}
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 512*1024)).Decode(&parsed); err != nil {
@@ -118,28 +136,38 @@ func (t *TelegramClient) DetectChats(ctx context.Context, botToken string) ([]De
 
 	seen := make(map[string]bool)
 	var chats []DetectedTelegramChat
-	for _, item := range parsed.Result {
-		if item.Message == nil {
-			continue
-		}
-		c := item.Message.Chat
-		idStr := strconv.FormatInt(c.ID, 10)
+	addChat := func(id int64, cType, title, username, firstName, lastName string) {
+		idStr := strconv.FormatInt(id, 10)
 		if seen[idStr] {
-			continue
+			return
 		}
 		seen[idStr] = true
-		label := strings.TrimSpace(c.Title)
+		label := strings.TrimSpace(title)
 		if label == "" {
-			label = strings.TrimSpace(c.FirstName + " " + c.LastName)
+			label = strings.TrimSpace(firstName + " " + lastName)
 		}
-		if c.Username != "" {
-			label += " (@" + c.Username + ")"
+		if username != "" {
+			label += " (@" + username + ")"
 		}
 		chats = append(chats, DetectedTelegramChat{
 			ChatID: idStr,
 			Title:  strings.TrimSpace(label),
-			Type:   c.Type,
+			Type:   cType,
 		})
+	}
+	for _, item := range parsed.Result {
+		if item.Message != nil {
+			c := item.Message.Chat
+			addChat(c.ID, c.Type, c.Title, c.Username, c.FirstName, c.LastName)
+		}
+		if item.ChannelPost != nil {
+			c := item.ChannelPost.Chat
+			addChat(c.ID, c.Type, c.Title, c.Username, "", "")
+		}
+		if item.MyChatMember != nil {
+			c := item.MyChatMember.Chat
+			addChat(c.ID, c.Type, c.Title, c.Username, c.FirstName, c.LastName)
+		}
 	}
 	return chats, nil
 }

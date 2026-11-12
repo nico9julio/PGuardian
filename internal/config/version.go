@@ -11,7 +11,7 @@ const (
 
 // Version and Commit are injected at build time via -ldflags.
 var (
-	Version   = "0.1.0"
+	Version   = "0.1.1"
 	Commit    = "dev"
 	BuildDate = "unknown"
 )

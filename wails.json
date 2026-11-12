@@ -12,7 +12,7 @@
   "info": {
     "companyName": "PGuardian Open Source",
     "productName": "PGuardian",
-    "productVersion": "0.1.0",
+    "productVersion": "0.1.1",
     "copyright": "Copyright © 2026 Nico (nico9julio)",
     "comments": "Enterprise PostgreSQL Backup & Cloud Sync Manager for Windows Server"
   }

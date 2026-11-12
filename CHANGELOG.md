@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-11-11
+
+### Added
+- **Visual Backup Schedule Builder (`ScheduleBuilder`):** Replaced raw Cron input requirement with an interactive bilingual frequency selector supporting Minutes (`5`–`59` min), Hourly (`1`–`23` h + target minute), Daily (`HH:MM`), Multiple times per day (24-hour slot grid), Weekly (day-of-week pills with weekday/weekend shortcuts), Monthly (day `1`–`28`), and optional Advanced Cron mode, with real-time human-readable summaries and upcoming execution previews in both `ProfilesView` and `SetupWizard`.
+- **Interactive Telegram Setup Guide (`TelegramGuide`):** Built-in step-by-step instructions for creating a bot via `@BotFather` and linking personal chats, groups, and channels, plus expanded `DetectChats` support for `channel_post` and `my_chat_member` updates.
+
+### Improved
+- **Google Drive Diagnostics & Folder Modal UX:** Parsed structured Google API errors with actionable hints and direct links to enable the Google Drive API in Cloud Console; added `Escape` key dismissal, reload controls, and dismissible scrollable alert banners across the UI.
+
 ## [0.1.0] - 2026-11-11
 
 ### Added
@@ -23,5 +32,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Encrypted all stored credentials and API tokens at rest using machine-bound **Windows DPAPI (`CryptProtectData`)**.
 - Eliminated local TCP listeners in favor of ACL-restricted Windows Named Pipes with caller token SID verification.
 
-[Unreleased]: https://github.com/nico9julio/PGuardian/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/nico9julio/PGuardian/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/nico9julio/PGuardian/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/nico9julio/PGuardian/releases/tag/v0.1.0

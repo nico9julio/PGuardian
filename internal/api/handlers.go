@@ -165,6 +165,9 @@ func (s *Server) handleSetupComplete(w http.ResponseWriter, r *http.Request) {
 		}
 		srvID, sErr := s.store.SavePGServer(req.Server)
 		if sErr == nil && req.InitialProfile.Name != "" {
+			if err := scheduler.ValidateCron(req.InitialProfile.ScheduleCron); err != nil {
+				req.InitialProfile.ScheduleCron = "0 2 * * *"
+			}
 			req.InitialProfile.PGServerID = srvID
 			_, _ = s.store.SaveProfile(req.InitialProfile)
 		}
