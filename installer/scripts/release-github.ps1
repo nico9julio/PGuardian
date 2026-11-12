@@ -64,7 +64,7 @@ foreach ($asset in $Assets) {
         "User-Agent"   = "PGuardian-Release-Script"
         "Content-Type" = "application/octet-stream"
     }
-    Invoke-RestMethod -Method Post -Uri "$UploadBase?name=$asset" -Headers $UploadHeaders -InFile $filePath | Out-Null
+    Invoke-RestMethod -Method Post -Uri "${UploadBase}?name=${asset}" -Headers $UploadHeaders -InFile $filePath | Out-Null
 }
 
 Write-Host "Published GitHub Release: $($Release.html_url)" -ForegroundColor Green
