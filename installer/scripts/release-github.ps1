@@ -46,7 +46,7 @@ $CreateBody = @{
 } | ConvertTo-Json
 
 $Release = Invoke-RestMethod -Method Post -Uri "https://api.github.com/repos/$Repo/releases" -Headers $Headers -Body $CreateBody -ContentType "application/json; charset=utf-8"
-$UploadBase = ($Release.upload_url -replace "\{\?name,label\}$", "")
+$UploadBase = "https://uploads.github.com/repos/$Repo/releases/$($Release.id)/assets"
 
 $Assets = @(
     "PGuardianSetup_v$Version.exe",
