@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import {
   LayoutDashboard,
   Database,
+  FolderArchive,
   CalendarClock,
   Server,
   Cloud,
@@ -23,6 +24,7 @@ import { LockScreen } from './pages/LockScreen';
 import { SetupWizard } from './pages/SetupWizard';
 import { DashboardView } from './pages/DashboardView';
 import { DatabasesView } from './pages/DatabasesView';
+import { DirectoriesView } from './pages/DirectoriesView';
 import { ProfilesView } from './pages/ProfilesView';
 import { ServersView } from './pages/ServersView';
 import { CloudView } from './pages/CloudView';
@@ -30,7 +32,7 @@ import { NotificationsView } from './pages/NotificationsView';
 import { UpdatesView } from './pages/UpdatesView';
 import { SettingsView } from './pages/SettingsView';
 
-type Tab = 'dashboard' | 'databases' | 'profiles' | 'servers' | 'cloud' | 'notifications' | 'updates' | 'settings';
+type Tab = 'dashboard' | 'databases' | 'directories' | 'profiles' | 'servers' | 'cloud' | 'notifications' | 'updates' | 'settings';
 
 const Shell: React.FC = () => {
   const { lang, setLang, theme, setTheme, t, bannerAlert, dismissBanner } = useApp();
@@ -101,6 +103,7 @@ const Shell: React.FC = () => {
   const navItems: { id: Tab; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
     { id: 'dashboard', label: t('navDashboard'), icon: LayoutDashboard },
     { id: 'databases', label: t('navDatabases'), icon: Database },
+    { id: 'directories', label: t('navDirectories'), icon: FolderArchive },
     { id: 'profiles', label: t('navProfiles'), icon: CalendarClock },
     { id: 'servers', label: t('navServers'), icon: Server },
     { id: 'cloud', label: t('navCloud'), icon: Cloud },
@@ -206,6 +209,7 @@ const Shell: React.FC = () => {
 
         {tab === 'dashboard' && <DashboardView />}
         {tab === 'databases' && <DatabasesView />}
+        {tab === 'directories' && <DirectoriesView />}
         {tab === 'profiles' && <ProfilesView />}
         {tab === 'servers' && <ServersView />}
         {tab === 'cloud' && <CloudView />}

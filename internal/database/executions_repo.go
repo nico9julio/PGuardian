@@ -5,18 +5,25 @@ import (
 	"time"
 )
 
+const executionSelectCols = `
+	id, profile_id, profile_name, target_type, server_engine, pg_server_id, server_name, directory_id, db_name,
+	trigger_type, format, started_at, finished_at, duration_ms, local_status, local_file_path, file_size_bytes,
+	sha256_checksum, cloud_status, drive_file_id, retry_count, next_retry_at, error_message, warning_message,
+	deleted_local_at, deleted_cloud_at`
+
 func (s *Store) InsertExecution(ex BackupExecution) (int64, error) {
 	var profID sql.NullInt64
 	if ex.ProfileID != nil && *ex.ProfileID > 0 {
 		profID = sql.NullInt64{Int64: *ex.ProfileID, Valid: true}
 	}
+	targetType := NormalizeTargetType(ex.TargetType)
 	res, err := s.db.Exec(`
 		INSERT INTO backup_executions (
-			profile_id, profile_name, pg_server_id, server_name, db_name, trigger_type, format,
-			started_at, local_status, cloud_status
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		profID, ex.ProfileName, ex.PGServerID, ex.ServerName, ex.DBName, ex.TriggerType, ex.Format,
-		ex.StartedAt, ex.LocalStatus, ex.CloudStatus,
+			profile_id, profile_name, target_type, server_engine, pg_server_id, server_name, directory_id, db_name,
+			trigger_type, format, started_at, local_status, cloud_status
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		profID, ex.ProfileName, targetType, ex.ServerEngine, ex.PGServerID, ex.ServerName, ex.DirectoryID, ex.DBName,
+		ex.TriggerType, ex.Format, ex.StartedAt, ex.LocalStatus, ex.CloudStatus,
 	)
 	if err != nil {
 		return 0, err
@@ -25,12 +32,16 @@ func (s *Store) InsertExecution(ex BackupExecution) (int64, error) {
 }
 
 func (s *Store) CompleteLocalExecution(id int64, status, filePath string, sizeBytes int64, sha256Sum string, durationMs int64, cloudStatus, errMsg string) error {
+	return s.CompleteLocalExecutionWithWarning(id, status, filePath, sizeBytes, sha256Sum, durationMs, cloudStatus, errMsg, "")
+}
+
+func (s *Store) CompleteLocalExecutionWithWarning(id int64, status, filePath string, sizeBytes int64, sha256Sum string, durationMs int64, cloudStatus, errMsg, warnMsg string) error {
 	_, err := s.db.Exec(`
 		UPDATE backup_executions SET
 			finished_at = ?, duration_ms = ?, local_status = ?, local_file_path = ?,
-			file_size_bytes = ?, sha256_checksum = ?, cloud_status = ?, error_message = ?
+			file_size_bytes = ?, sha256_checksum = ?, cloud_status = ?, error_message = ?, warning_message = ?
 		WHERE id = ?`,
-		nowISO(), durationMs, status, filePath, sizeBytes, sha256Sum, cloudStatus, errMsg, id,
+		nowISO(), durationMs, status, filePath, sizeBytes, sha256Sum, cloudStatus, errMsg, warnMsg, id,
 	)
 	return err
 }
@@ -56,12 +67,7 @@ func (s *Store) MarkCloudDeleted(id int64) error {
 }
 
 func (s *Store) GetExecution(id int64) (*BackupExecution, error) {
-	row := s.db.QueryRow(`
-		SELECT id, profile_id, profile_name, pg_server_id, server_name, db_name, trigger_type, format,
-		       started_at, finished_at, duration_ms, local_status, local_file_path, file_size_bytes,
-		       sha256_checksum, cloud_status, drive_file_id, retry_count, next_retry_at, error_message,
-		       deleted_local_at, deleted_cloud_at
-		FROM backup_executions WHERE id = ?`, id)
+	row := s.db.QueryRow(`SELECT `+executionSelectCols+` FROM backup_executions WHERE id = ?`, id)
 	ex, err := scanExecutionRow(row)
 	if err != nil {
 		return nil, err
@@ -69,19 +75,17 @@ func (s *Store) GetExecution(id int64) (*BackupExecution, error) {
 	return &ex, nil
 }
 
-func (s *Store) ListExecutions(serverID int64, dbName string, limit int) ([]BackupExecution, error) {
+func (s *Store) ListExecutions(serverID int64, dbName string, directoryID int64, limit int) ([]BackupExecution, error) {
 	if limit <= 0 || limit > 500 {
 		limit = 100
 	}
-	query := `
-		SELECT id, profile_id, profile_name, pg_server_id, server_name, db_name, trigger_type, format,
-		       started_at, finished_at, duration_ms, local_status, local_file_path, file_size_bytes,
-		       sha256_checksum, cloud_status, drive_file_id, retry_count, next_retry_at, error_message,
-		       deleted_local_at, deleted_cloud_at
-		FROM backup_executions WHERE 1=1`
+	query := `SELECT ` + executionSelectCols + ` FROM backup_executions WHERE 1=1`
 	var args []any
-	if serverID > 0 {
-		query += ` AND pg_server_id = ?`
+	if directoryID > 0 {
+		query += ` AND target_type = 'directory' AND directory_id = ?`
+		args = append(args, directoryID)
+	} else if serverID > 0 {
+		query += ` AND target_type = 'database' AND pg_server_id = ?`
 		args = append(args, serverID)
 	}
 	if dbName != "" {
@@ -112,10 +116,7 @@ func (s *Store) ListExecutions(serverID int64, dbName string, limit int) ([]Back
 func (s *Store) ListDueCloudUploads(now time.Time) ([]BackupExecution, error) {
 	nowStr := now.UTC().Format(time.RFC3339)
 	rows, err := s.db.Query(`
-		SELECT id, profile_id, profile_name, pg_server_id, server_name, db_name, trigger_type, format,
-		       started_at, finished_at, duration_ms, local_status, local_file_path, file_size_bytes,
-		       sha256_checksum, cloud_status, drive_file_id, retry_count, next_retry_at, error_message,
-		       deleted_local_at, deleted_cloud_at
+		SELECT `+executionSelectCols+`
 		FROM backup_executions
 		WHERE local_status = 'completed'
 		  AND deleted_local_at = ''
@@ -137,16 +138,24 @@ func (s *Store) ListDueCloudUploads(now time.Time) ([]BackupExecution, error) {
 	return out, rows.Err()
 }
 
-// ListActiveLocalCopiesForRetention lists non-deleted completed local backups for a profile+db, newest first.
-func (s *Store) ListActiveLocalCopiesForRetention(profileID int64, dbName string) ([]BackupExecution, error) {
-	rows, err := s.db.Query(`
-		SELECT id, profile_id, profile_name, pg_server_id, server_name, db_name, trigger_type, format,
-		       started_at, finished_at, duration_ms, local_status, local_file_path, file_size_bytes,
-		       sha256_checksum, cloud_status, drive_file_id, retry_count, next_retry_at, error_message,
-		       deleted_local_at, deleted_cloud_at
-		FROM backup_executions
-		WHERE profile_id = ? AND db_name = ? AND local_status = 'completed' AND deleted_local_at = ''
-		ORDER BY started_at DESC, id DESC`, profileID, dbName)
+// ListActiveLocalCopiesForRetention lists non-deleted completed local backups for a profile+target, newest first.
+func (s *Store) ListActiveLocalCopiesForRetention(profileID int64, targetType string, directoryID int64, dbName string) ([]BackupExecution, error) {
+	targetType = NormalizeTargetType(targetType)
+	var rows *sql.Rows
+	var err error
+	if targetType == TargetDirectory {
+		rows, err = s.db.Query(`
+			SELECT `+executionSelectCols+`
+			FROM backup_executions
+			WHERE profile_id = ? AND target_type = 'directory' AND directory_id = ? AND local_status = 'completed' AND deleted_local_at = ''
+			ORDER BY started_at DESC, id DESC`, profileID, directoryID)
+	} else {
+		rows, err = s.db.Query(`
+			SELECT `+executionSelectCols+`
+			FROM backup_executions
+			WHERE profile_id = ? AND target_type = 'database' AND db_name = ? AND local_status = 'completed' AND deleted_local_at = ''
+			ORDER BY started_at DESC, id DESC`, profileID, dbName)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -163,16 +172,24 @@ func (s *Store) ListActiveLocalCopiesForRetention(profileID int64, dbName string
 	return out, rows.Err()
 }
 
-// ListActiveCloudCopiesForRetention lists non-deleted completed Drive backups for a profile+db, newest first.
-func (s *Store) ListActiveCloudCopiesForRetention(profileID int64, dbName string) ([]BackupExecution, error) {
-	rows, err := s.db.Query(`
-		SELECT id, profile_id, profile_name, pg_server_id, server_name, db_name, trigger_type, format,
-		       started_at, finished_at, duration_ms, local_status, local_file_path, file_size_bytes,
-		       sha256_checksum, cloud_status, drive_file_id, retry_count, next_retry_at, error_message,
-		       deleted_local_at, deleted_cloud_at
-		FROM backup_executions
-		WHERE profile_id = ? AND db_name = ? AND cloud_status = 'completed' AND deleted_cloud_at = '' AND drive_file_id != ''
-		ORDER BY started_at DESC, id DESC`, profileID, dbName)
+// ListActiveCloudCopiesForRetention lists non-deleted completed Drive backups for a profile+target, newest first.
+func (s *Store) ListActiveCloudCopiesForRetention(profileID int64, targetType string, directoryID int64, dbName string) ([]BackupExecution, error) {
+	targetType = NormalizeTargetType(targetType)
+	var rows *sql.Rows
+	var err error
+	if targetType == TargetDirectory {
+		rows, err = s.db.Query(`
+			SELECT `+executionSelectCols+`
+			FROM backup_executions
+			WHERE profile_id = ? AND target_type = 'directory' AND directory_id = ? AND cloud_status = 'completed' AND deleted_cloud_at = '' AND drive_file_id != ''
+			ORDER BY started_at DESC, id DESC`, profileID, directoryID)
+	} else {
+		rows, err = s.db.Query(`
+			SELECT `+executionSelectCols+`
+			FROM backup_executions
+			WHERE profile_id = ? AND target_type = 'database' AND db_name = ? AND cloud_status = 'completed' AND deleted_cloud_at = '' AND drive_file_id != ''
+			ORDER BY started_at DESC, id DESC`, profileID, dbName)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -311,15 +328,16 @@ func scanExecutionRow(r rowScanner) (BackupExecution, error) {
 	var ex BackupExecution
 	var profID sql.NullInt64
 	err := r.Scan(
-		&ex.ID, &profID, &ex.ProfileName, &ex.PGServerID, &ex.ServerName, &ex.DBName, &ex.TriggerType, &ex.Format,
-		&ex.StartedAt, &ex.FinishedAt, &ex.DurationMs, &ex.LocalStatus, &ex.LocalFilePath, &ex.FileSizeBytes,
-		&ex.SHA256Checksum, &ex.CloudStatus, &ex.DriveFileID, &ex.RetryCount, &ex.NextRetryAt, &ex.ErrorMessage,
+		&ex.ID, &profID, &ex.ProfileName, &ex.TargetType, &ex.ServerEngine, &ex.PGServerID, &ex.ServerName, &ex.DirectoryID, &ex.DBName,
+		&ex.TriggerType, &ex.Format, &ex.StartedAt, &ex.FinishedAt, &ex.DurationMs, &ex.LocalStatus, &ex.LocalFilePath, &ex.FileSizeBytes,
+		&ex.SHA256Checksum, &ex.CloudStatus, &ex.DriveFileID, &ex.RetryCount, &ex.NextRetryAt, &ex.ErrorMessage, &ex.WarningMessage,
 		&ex.DeletedLocalAt, &ex.DeletedCloudAt,
 	)
 	if profID.Valid {
 		v := profID.Int64
 		ex.ProfileID = &v
 	}
+	ex.TargetType = NormalizeTargetType(ex.TargetType)
 	return ex, err
 }
 

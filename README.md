@@ -4,8 +4,8 @@
 
 # PGuardian
 
-**Gestor Empresarial de Copias de Seguridad de PostgreSQL para Windows Server y Entornos RDP (Terminal Server)**  
-*Enterprise-Grade PostgreSQL Backup & Google Drive Sync Manager for Windows Server & Multi-Session RDP*
+**Gestor Empresarial de Copias de Seguridad (PostgreSQL, MariaDB/MySQL y Directorios) para Windows Server y Entornos RDP (Terminal Server)**  
+*Enterprise-Grade PostgreSQL, MariaDB/MySQL & Directory Backup + Google Drive Sync Manager for Windows Server & Multi-Session RDP*
 
 [![Release](https://img.shields.io/github/v/release/nico9julio/PGuardian?style=flat-square&color=06b6d4)](https://github.com/nico9julio/PGuardian/releases)
 [![Go](https://img.shields.io/badge/Go-1.27+-00ADD8?style=flat-square&logo=go&logoColor=white)](https://go.dev/)
@@ -19,7 +19,7 @@
 
 ## 🛡️ ¿Qué es PGuardian? / Overview
 
-**PGuardian** es una solución de administración y automatización de backups de bases de datos **PostgreSQL** diseñada específicamente para **servidores Windows en producción que también operan como servidores de terminales (RDP)** y alojan el propio motor PostgreSQL.
+**PGuardian** es una solución de administración y automatización de backups de bases de datos (**PostgreSQL**, **MariaDB** y **MySQL**) y **directorios/carpetas** diseñada específicamente para **servidores Windows en producción que también operan como servidores de terminales (RDP)**.
 
 A diferencia de aplicaciones monolíticas pesadas que consumen cientos de megabytes por usuario conectado o se detienen al cerrar sesión, **PGuardian** desacopla completamente su motor de ejecución en **Sesión 0** de su consola nativa y su agente de notificaciones.
 
@@ -28,7 +28,10 @@ A diferencia de aplicaciones monolíticas pesadas que consumen cientos de megaby
 - **⚡ Impacto Mínimo y Cero Memory Leaks:**
   - Motor compilado en **Go nativo** corriendo como Servicio de Windows (`PGuardianService`) con huella constante de **~15–25 MB de RAM**.
   - Streaming directo en disco y red (`io.CopyBuffer` + subidas por fragmentos fijos de 8 MB): respaldar una base de 50 MB o 100 GB usa exactamente la misma memoria RAM.
-  - Ejecución de `pg_dump.exe` con prioridad reducida (`BELOW_NORMAL_PRIORITY_CLASS`) para no degradar el rendimiento de PostgreSQL ni las sesiones RDP activas.
+  - Ejecución de `pg_dump.exe`, `mariadb-dump.exe` / `mysqldump.exe` y archivador `.zip` con prioridad reducida (`BELOW_NORMAL_PRIORITY_CLASS`) para no degradar el rendimiento ni las sesiones RDP activas.
+- **🗄️ Soporte Multi-Motor (PostgreSQL, MariaDB, MySQL) y Carpetas (.zip):**
+  - Autodetección de binarios `pg_dump.exe`, `mariadb-dump.exe` y `mysqldump.exe` con aislamiento temporal de credenciales (`--defaults-extra-file` `0600`).
+  - Catálogo de directorios con archivos `.zip` en streaming, reglas de exclusión (`node_modules`, `.git`, `*.tmp`) y lectura compartida en Windows (`FILE_SHARE_READ|WRITE|DELETE`) que omite archivos con bloqueo exclusivo registrando advertencias sin abortar el respaldo.
 - **🖥️ Pensado para Windows Terminal Server (RDP Multiusuario):**
   - Corre 24/7 sin necesidad de que ningún usuario inicie sesión en Windows.
   - **Autoarranque selectivo por usuario:** El agente de notificaciones (`PGuardianTray.exe`, Win32 puro ~4 MB RAM sin WebView2) registra su tarea de inicio **únicamente** en los usuarios de Windows habilitados desde el panel. Para el resto de usuarios RDP no se ejecuta ningún proceso (**0 procesos, 0 MB RAM**).

@@ -13,6 +13,8 @@ import (
 	"github.com/nico9julio/PGuardian/internal/backup"
 	"github.com/nico9julio/PGuardian/internal/config"
 	"github.com/nico9julio/PGuardian/internal/database"
+	"github.com/nico9julio/PGuardian/internal/dirbackup"
+	"github.com/nico9julio/PGuardian/internal/mysql"
 	"github.com/nico9julio/PGuardian/internal/notify"
 	"github.com/nico9julio/PGuardian/internal/postgres"
 	"github.com/nico9julio/PGuardian/internal/scheduler"
@@ -27,6 +29,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 
 	// Allowed during First-Run Wizard OR when authenticated
 	mux.HandleFunc("GET /api/v1/postgres/discover", s.requireSetupOrAuth(s.handleDiscoverPG))
+	mux.HandleFunc("GET /api/v1/mysql/discover", s.requireSetupOrAuth(s.handleDiscoverMySQL))
 	mux.HandleFunc("POST /api/v1/postgres/test", s.requireSetupOrAuth(s.handleTestPG))
 	mux.HandleFunc("POST /api/v1/postgres/databases-preview", s.requireSetupOrAuth(s.handlePreviewDatabases))
 	mux.HandleFunc("GET /api/v1/cloud/status", s.requireSetupOrAuth(s.handleCloudStatus))
@@ -47,9 +50,14 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/servers", s.requireAuth(s.handleSaveServer))
 	mux.HandleFunc("DELETE /api/v1/servers", s.requireAuth(s.handleDeleteServer))
 
+	mux.HandleFunc("GET /api/v1/directories", s.requireAuth(s.handleListDirectoriesCatalog))
+	mux.HandleFunc("POST /api/v1/directories", s.requireAuth(s.handleSaveDirectory))
+	mux.HandleFunc("DELETE /api/v1/directories", s.requireAuth(s.handleDeleteDirectory))
+
 	mux.HandleFunc("GET /api/v1/databases", s.requireAuth(s.handleListDatabasesCatalog))
 	mux.HandleFunc("GET /api/v1/executions", s.requireAuth(s.handleListExecutions))
 	mux.HandleFunc("POST /api/v1/backups/run-db", s.requireAuth(s.handleRunDatabaseBackup))
+	mux.HandleFunc("POST /api/v1/backups/run-dir", s.requireAuth(s.handleRunDirectoryBackup))
 	mux.HandleFunc("POST /api/v1/backups/run-profile", s.requireAuth(s.handleRunProfileBackup))
 	mux.HandleFunc("POST /api/v1/backups/retry-cloud", s.requireAuth(s.handleRetryCloudUpload))
 
@@ -158,17 +166,29 @@ func (s *Server) handleSetupComplete(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = s.store.SetSetting(database.KeyMinFreeDiskGB, strconv.Itoa(req.MinFreeDiskGB))
 
-	if req.Server.Host != "" {
+	if strings.TrimSpace(req.Server.Host) != "" {
 		req.Server.IsDefault = true
+		req.Server.Engine = database.NormalizeEngine(req.Server.Engine)
 		if req.Server.Name == "" {
-			req.Server.Name = "PostgreSQL Local"
+			switch req.Server.Engine {
+			case database.EngineMariaDB:
+				req.Server.Name = "MariaDB Local"
+			case database.EngineMySQL:
+				req.Server.Name = "MySQL Local"
+			default:
+				req.Server.Name = "PostgreSQL Local"
+			}
 		}
 		srvID, sErr := s.store.SavePGServer(req.Server)
 		if sErr == nil && req.InitialProfile.Name != "" {
 			if err := scheduler.ValidateCron(req.InitialProfile.ScheduleCron); err != nil {
 				req.InitialProfile.ScheduleCron = "0 2 * * *"
 			}
+			req.InitialProfile.TargetType = database.TargetDatabase
 			req.InitialProfile.PGServerID = srvID
+			if database.IsMySQLFamily(req.Server.Engine) {
+				req.InitialProfile.Format = "plain_gz"
+			}
 			_, _ = s.store.SaveProfile(req.InitialProfile)
 		}
 	}
@@ -313,7 +333,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, _ *http.Request) {
 	metrics, _ := s.store.GetDashboardMetrics()
 	localRoot := s.store.GetSetting(database.KeyLocalBackupRoot, config.DefaultLocalBackupsDir())
 	disk, _ := backup.GetDiskSpace(localRoot)
-	recent, _ := s.store.ListExecutions(0, "", 15)
+	recent, _ := s.store.ListExecutions(0, "", 0, 15)
 	drive := s.cloudSvc.Status()
 
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -330,10 +350,30 @@ func (s *Server) handleLogs(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, config.GlobalLogBuffer.Recent())
 }
 
-// --- PostgreSQL Discovery, Servers & Databases ---
+// --- Database Engine Discovery, Servers & Databases ---
 
 func (s *Server) handleDiscoverPG(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, postgres.DiscoverPGDumpBinaries())
+}
+
+func (s *Server) handleDiscoverMySQL(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, mysql.DiscoverMySQLDumpBinaries())
+}
+
+func (s *Server) resolveServerEngineAndPwd(req database.PGServer) (string, string) {
+	engine := strings.TrimSpace(req.Engine)
+	pwd := req.Password
+	if req.ID > 0 {
+		if storedSrv, storedPwd, err := s.store.GetPGServerWithSecret(req.ID); err == nil {
+			if pwd == "" {
+				pwd = storedPwd
+			}
+			if engine == "" {
+				engine = storedSrv.Engine
+			}
+		}
+	}
+	return database.NormalizeEngine(engine), pwd
 }
 
 func (s *Server) handleTestPG(w http.ResponseWriter, r *http.Request) {
@@ -342,19 +382,25 @@ func (s *Server) handleTestPG(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	pwd := req.Password
-	if pwd == "" && req.ID > 0 {
-		_, storedPwd, err := s.store.GetPGServerWithSecret(req.ID)
-		if err == nil {
-			pwd = storedPwd
-		}
+	engine, pwd := s.resolveServerEngineAndPwd(req)
+
+	var ver string
+	var err error
+	if database.IsMySQLFamily(engine) {
+		ver, err = mysql.TestConnection(r.Context(), mysql.ConnectionParams{
+			Host:     req.Host,
+			Port:     req.Port,
+			Username: req.Username,
+			Password: pwd,
+		})
+	} else {
+		ver, err = postgres.TestConnection(r.Context(), postgres.ConnectionParams{
+			Host:     req.Host,
+			Port:     req.Port,
+			Username: req.Username,
+			Password: pwd,
+		})
 	}
-	ver, err := postgres.TestConnection(r.Context(), postgres.ConnectionParams{
-		Host:     req.Host,
-		Port:     req.Port,
-		Username: req.Username,
-		Password: pwd,
-	})
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -368,13 +414,23 @@ func (s *Server) handlePreviewDatabases(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	pwd := req.Password
-	if pwd == "" && req.ID > 0 {
-		_, storedPwd, err := s.store.GetPGServerWithSecret(req.ID)
-		if err == nil {
-			pwd = storedPwd
+	engine, pwd := s.resolveServerEngineAndPwd(req)
+
+	if database.IsMySQLFamily(engine) {
+		dbs, err := mysql.ListDatabases(r.Context(), mysql.ConnectionParams{
+			Host:     req.Host,
+			Port:     req.Port,
+			Username: req.Username,
+			Password: pwd,
+		})
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
 		}
+		writeJSON(w, http.StatusOK, dbs)
+		return
 	}
+
 	dbs, err := postgres.ListDatabases(r.Context(), postgres.ConnectionParams{
 		Host:     req.Host,
 		Port:     req.Port,
@@ -442,21 +498,41 @@ func (s *Server) handleListDatabasesCatalog(w http.ResponseWriter, r *http.Reque
 		if err != nil {
 			continue
 		}
-		liveDBs, err := postgres.ListDatabases(r.Context(), postgres.ConnectionParams{
-			Host:     srv.Host,
-			Port:     srv.Port,
-			Username: srv.Username,
-			Password: pwd,
-		})
-		if err != nil {
-			continue
+
+		engine := database.NormalizeEngine(srv.Engine)
+		var liveDBs []postgres.LiveDatabaseInfo
+		if database.IsMySQLFamily(engine) {
+			mysqlDBs, mErr := mysql.ListDatabases(r.Context(), mysql.ConnectionParams{
+				Host:     srv.Host,
+				Port:     srv.Port,
+				Username: srv.Username,
+				Password: pwd,
+			})
+			if mErr != nil {
+				continue
+			}
+			for _, d := range mysqlDBs {
+				liveDBs = append(liveDBs, postgres.LiveDatabaseInfo{Name: d.Name, SizeBytes: d.SizeBytes})
+			}
+		} else {
+			pgDBs, pErr := postgres.ListDatabases(r.Context(), postgres.ConnectionParams{
+				Host:     srv.Host,
+				Port:     srv.Port,
+				Username: srv.Username,
+				Password: pwd,
+			})
+			if pErr != nil {
+				continue
+			}
+			liveDBs = pgDBs
 		}
+
 		statsMap, _ := s.store.GetDBBackupStatsMap(srv.ID)
 
 		for _, dbInfo := range liveDBs {
 			var assigned []string
 			for _, p := range profiles {
-				if p.PGServerID != srv.ID || !p.Enabled {
+				if p.TargetType != database.TargetDatabase || p.PGServerID != srv.ID || !p.Enabled {
 					continue
 				}
 				if p.SelectionMode == "all_auto" {
@@ -486,6 +562,7 @@ func (s *Server) handleListDatabasesCatalog(w http.ResponseWriter, r *http.Reque
 			summaries = append(summaries, database.DatabaseBackupSummary{
 				ServerID:         srv.ID,
 				ServerName:       srv.Name,
+				ServerEngine:     engine,
 				DBName:           dbInfo.Name,
 				LiveSizeBytes:    dbInfo.SizeBytes,
 				AssignedProfiles: assigned,
@@ -504,11 +581,105 @@ func (s *Server) handleListDatabasesCatalog(w http.ResponseWriter, r *http.Reque
 	writeJSON(w, http.StatusOK, summaries)
 }
 
+// --- Directories Catalog & Manual Backups ---
+
+func (s *Server) handleListDirectoriesCatalog(w http.ResponseWriter, r *http.Request) {
+	dirs, err := s.store.ListDirectories()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	profiles, _ := s.store.ListProfiles()
+	statsMap, _ := s.store.GetDirectoryBackupStatsMap()
+	localRoot := s.store.GetSetting(database.KeyLocalBackupRoot, config.DefaultLocalBackupsDir())
+
+	summaries := make([]database.DirectoryBackupSummary, 0, len(dirs))
+	for _, dir := range dirs {
+		inspectCtx, cancel := context.WithTimeout(r.Context(), 2500*time.Millisecond)
+		exists, liveSize, fileCount := dirbackup.InspectDirectory(inspectCtx, dir.Path, dir.ExcludePatterns, []string{localRoot})
+		cancel()
+
+		assigned := []string{}
+		for _, p := range profiles {
+			if p.TargetType != database.TargetDirectory || !p.Enabled {
+				continue
+			}
+			if p.SelectionMode == "all_auto" {
+				excluded := false
+				for _, ex := range p.ExcludedDirectories {
+					if ex == dir.ID {
+						excluded = true
+						break
+					}
+				}
+				if !excluded {
+					assigned = append(assigned, p.Name)
+				}
+			} else {
+				for _, inc := range p.IncludedDirectories {
+					if inc == dir.ID {
+						assigned = append(assigned, p.Name)
+						break
+					}
+				}
+			}
+		}
+
+		st := statsMap[dir.ID]
+		excl := dir.ExcludePatterns
+		if excl == nil {
+			excl = []string{}
+		}
+		summaries = append(summaries, database.DirectoryBackupSummary{
+			DirectoryID:      dir.ID,
+			Name:             dir.Name,
+			Path:             dir.Path,
+			ExcludePatterns:  excl,
+			Exists:           exists,
+			LiveSizeBytes:    liveSize,
+			LiveFileCount:    fileCount,
+			AssignedProfiles: assigned,
+			TotalCopies:      st.TotalCopies,
+			LocalCopies:      st.LocalCopies,
+			CloudCopies:      st.CloudCopies,
+			LastBackupAt:     st.LastBackupAt,
+			LastLocalStatus:  st.LastLocalStatus,
+			LastCloudStatus:  st.LastCloudStatus,
+		})
+	}
+	writeJSON(w, http.StatusOK, summaries)
+}
+
+func (s *Server) handleSaveDirectory(w http.ResponseWriter, r *http.Request) {
+	var req database.BackupDirectory
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	id, err := s.store.SaveDirectory(req)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]int64{"id": id})
+}
+
+func (s *Server) handleDeleteDirectory(w http.ResponseWriter, r *http.Request) {
+	id, _ := strconv.ParseInt(r.URL.Query().Get("id"), 10, 64)
+	if err := s.store.DeleteDirectory(id); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	_ = s.sched.Reload(context.Background())
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
 func (s *Server) handleListExecutions(w http.ResponseWriter, r *http.Request) {
 	srvID, _ := strconv.ParseInt(r.URL.Query().Get("serverId"), 10, 64)
+	dirID, _ := strconv.ParseInt(r.URL.Query().Get("directoryId"), 10, 64)
 	dbName := r.URL.Query().Get("dbName")
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	list, err := s.store.ListExecutions(srvID, dbName, limit)
+	list, err := s.store.ListExecutions(srvID, dbName, dirID, limit)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -528,6 +699,21 @@ func (s *Server) handleRunDatabaseBackup(w http.ResponseWriter, r *http.Request)
 	}
 	config.SafeGo("manual-db-backup", func() {
 		_, _ = s.engine.RunManualDatabase(context.Background(), req.ServerID, req.DBName, req.ProfileID)
+	})
+	writeJSON(w, http.StatusAccepted, map[string]bool{"started": true})
+}
+
+func (s *Server) handleRunDirectoryBackup(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		DirectoryID int64 `json:"directoryId"`
+		ProfileID   int64 `json:"profileId"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	config.SafeGo("manual-dir-backup", func() {
+		_, _ = s.engine.RunManualDirectory(context.Background(), req.DirectoryID, req.ProfileID)
 	})
 	writeJSON(w, http.StatusAccepted, map[string]bool{"started": true})
 }
@@ -582,6 +768,10 @@ func (s *Server) handleSaveProfile(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := scheduler.ValidateCron(req.ScheduleCron); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid schedule cron expression: "+err.Error())
+		return
+	}
+	if database.NormalizeTargetType(req.TargetType) == database.TargetDatabase && req.PGServerID <= 0 {
+		writeError(w, http.StatusBadRequest, "a database server must be selected for database profiles")
 		return
 	}
 	id, err := s.store.SaveProfile(req)

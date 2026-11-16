@@ -57,42 +57,63 @@ func (d *Dispatcher) EmitLive(ev Event) {
 }
 
 func (d *Dispatcher) NotifyBackupSuccess(dbName, profileName string, sizeBytes int64, cloudUploaded bool, execID int64) {
+	d.NotifyBackupSuccessWithWarning(dbName, profileName, sizeBytes, cloudUploaded, "", execID)
+}
+
+func (d *Dispatcher) NotifyBackupSuccessWithWarning(targetName, profileName string, sizeBytes int64, cloudUploaded bool, warningMsg string, execID int64) {
 	rules := d.ruleMap()
 	winRule := rules["windows"]
 	tgRule := rules["telegram"]
 
 	sizeMB := float64(sizeBytes) / (1024 * 1024)
+	severity := "success"
+	if warningMsg != "" {
+		severity = "warning"
+	}
+
 	var title, msg, tgMsg string
 	if d.isSpanish() {
-		title = "Copia completada: " + dbName
+		title = "Copia completada: " + targetName
 		if cloudUploaded {
 			msg = fmt.Sprintf("Perfil '%s' completado (%.2f MB) en Local y Google Drive.", profileName, sizeMB)
 		} else {
 			msg = fmt.Sprintf("Perfil '%s' completado localmente (%.2f MB).", profileName, sizeMB)
 		}
-		tgMsg = fmt.Sprintf("✅ <b>PGuardian [%s]</b>\n<b>Base:</b> <code>%s</code>\n<b>Perfil:</b> %s\n<b>Tamaño:</b> %.2f MB\n<b>Destino:</b> %s",
-			html.EscapeString(d.hostname), html.EscapeString(dbName), html.EscapeString(profileName), sizeMB,
+		if warningMsg != "" {
+			msg += " Aviso: " + warningMsg
+		}
+		tgMsg = fmt.Sprintf("✅ <b>PGuardian [%s]</b>\n<b>Origen:</b> <code>%s</code>\n<b>Perfil:</b> %s\n<b>Tamaño:</b> %.2f MB\n<b>Destino:</b> %s",
+			html.EscapeString(d.hostname), html.EscapeString(targetName), html.EscapeString(profileName), sizeMB,
 			map[bool]string{true: "Local + Google Drive", false: "Local"}[cloudUploaded])
+		if warningMsg != "" {
+			tgMsg += fmt.Sprintf("\n⚠️ <b>Aviso:</b> <code>%s</code>", html.EscapeString(warningMsg))
+		}
 	} else {
-		title = "Backup completed: " + dbName
+		title = "Backup completed: " + targetName
 		if cloudUploaded {
 			msg = fmt.Sprintf("Profile '%s' completed (%.2f MB) on Local & Google Drive.", profileName, sizeMB)
 		} else {
 			msg = fmt.Sprintf("Profile '%s' completed locally (%.2f MB).", profileName, sizeMB)
 		}
-		tgMsg = fmt.Sprintf("✅ <b>PGuardian [%s]</b>\n<b>Database:</b> <code>%s</code>\n<b>Profile:</b> %s\n<b>Size:</b> %.2f MB\n<b>Target:</b> %s",
-			html.EscapeString(d.hostname), html.EscapeString(dbName), html.EscapeString(profileName), sizeMB,
+		if warningMsg != "" {
+			msg += " Warning: " + warningMsg
+		}
+		tgMsg = fmt.Sprintf("✅ <b>PGuardian [%s]</b>\n<b>Target:</b> <code>%s</code>\n<b>Profile:</b> %s\n<b>Size:</b> %.2f MB\n<b>Destination:</b> %s",
+			html.EscapeString(d.hostname), html.EscapeString(targetName), html.EscapeString(profileName), sizeMB,
 			map[bool]string{true: "Local + Google Drive", false: "Local"}[cloudUploaded])
+		if warningMsg != "" {
+			tgMsg += fmt.Sprintf("\n⚠️ <b>Warning:</b> <code>%s</code>", html.EscapeString(warningMsg))
+		}
 	}
 
 	d.broadcaster.Publish(Event{
 		Type:        EventBackupCompleted,
 		Title:       title,
 		Message:     msg,
-		Severity:    "success",
+		Severity:    severity,
 		ShowToast:   winRule.OnSuccess,
 		ExecutionID: execID,
-		DBName:      dbName,
+		DBName:      targetName,
 	})
 
 	if tgRule.OnSuccess {

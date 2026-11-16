@@ -1,22 +1,36 @@
 import React, { useEffect, useState } from 'react';
-import { Plus, Play, Trash2, Edit3, Folder, Check, Clock } from 'lucide-react';
-import { apiCall, BackupProfile, formatBytes, PGServer } from '../lib/bridge';
+import { Plus, Play, Trash2, Edit3, Folder, Check, Clock, Database, FolderArchive } from 'lucide-react';
+import {
+  apiCall,
+  BackupProfile,
+  DirectoryBackupSummary,
+  engineBadgeClasses,
+  engineLabel,
+  formatBytes,
+  PGServer,
+} from '../lib/bridge';
 import { useApp } from '../context/AppContext';
 import { DriveFolderModal } from '../components/DriveFolderModal';
 import { ScheduleBuilder } from '../components/ScheduleBuilder';
 import { describeCron } from '../lib/scheduleUtils';
 
-const emptyProfile = (defaultServerId: number): BackupProfile => ({
+const isMySQLFamily = (eng?: string) => eng === 'mariadb' || eng === 'mysql';
+
+const emptyProfile = (defaultServer: PGServer | undefined): BackupProfile => ({
   id: 0,
   name: '',
-  pgServerId: defaultServerId,
+  targetType: defaultServer ? 'database' : 'directory',
+  pgServerId: defaultServer?.id || 0,
+  serverEngine: defaultServer?.engine || 'postgres',
   enabled: true,
   scheduleCron: '0 2 * * *',
   scheduleLabel: 'Daily 02:00',
-  format: 'custom',
+  format: !defaultServer ? 'zip' : isMySQLFamily(defaultServer.engine) ? 'plain_gz' : 'custom',
   selectionMode: 'manual',
   includedDatabases: [],
   excludedDatabases: [],
+  includedDirectories: [],
+  excludedDirectories: [],
   localDirOverride: '',
   localRetentionMode: 'count',
   localRetentionValue: 7,
@@ -31,18 +45,21 @@ export const ProfilesView: React.FC = () => {
   const { lang, t, notifyBanner } = useApp();
   const [profiles, setProfiles] = useState<BackupProfile[]>([]);
   const [servers, setServers] = useState<PGServer[]>([]);
+  const [directories, setDirectories] = useState<DirectoryBackupSummary[]>([]);
   const [editing, setEditing] = useState<BackupProfile | null>(null);
   const [serverDBs, setServerDBs] = useState<{ name: string; sizeBytes: number }[]>([]);
   const [folderModalOpen, setFolderModalOpen] = useState(false);
 
   const loadAll = async () => {
     try {
-      const [profs, srvs] = await Promise.all([
+      const [profs, srvs, dirs] = await Promise.all([
         apiCall<BackupProfile[]>('GET', '/api/v1/profiles'),
         apiCall<PGServer[]>('GET', '/api/v1/servers'),
+        apiCall<DirectoryBackupSummary[]>('GET', '/api/v1/directories'),
       ]);
       setProfiles(profs);
       setServers(srvs);
+      setDirectories(dirs);
     } catch (e) {
       notifyBanner(e instanceof Error ? e.message : String(e), 'error');
     }
@@ -54,7 +71,10 @@ export const ProfilesView: React.FC = () => {
 
   const loadDBsForServer = async (srvId: number) => {
     const srv = servers.find((s) => s.id === srvId);
-    if (!srv) return;
+    if (!srv) {
+      setServerDBs([]);
+      return;
+    }
     try {
       const list = await apiCall<{ name: string; sizeBytes: number }[]>('POST', '/api/v1/postgres/databases-preview', srv);
       setServerDBs(list);
@@ -64,8 +84,19 @@ export const ProfilesView: React.FC = () => {
   };
 
   const startEdit = (p: BackupProfile) => {
-    setEditing({ ...p });
-    void loadDBsForServer(p.pgServerId);
+    setEditing({
+      ...p,
+      targetType: p.targetType || 'database',
+      includedDatabases: p.includedDatabases || [],
+      excludedDatabases: p.excludedDatabases || [],
+      includedDirectories: p.includedDirectories || [],
+      excludedDirectories: p.excludedDirectories || [],
+    });
+    if ((p.targetType || 'database') === 'database' && p.pgServerId > 0) {
+      void loadDBsForServer(p.pgServerId);
+    } else {
+      setServerDBs([]);
+    }
   };
 
   const handleSave = async (e: React.FormEvent) => {
@@ -99,14 +130,18 @@ export const ProfilesView: React.FC = () => {
     }
   };
 
+  const dirNameById = (id: number) => directories.find((d) => d.directoryId === id)?.name || `#${id}`;
+
+  const selectedServer = editing ? servers.find((s) => s.id === editing.pgServerId) : undefined;
+  const selectedServerIsMySQL = isMySQLFamily(selectedServer?.engine);
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h2 className="text-xl font-bold">{t('profTitle')}</h2>
         <button
           onClick={() => {
-            const defId = servers[0]?.id || 0;
-            const p = emptyProfile(defId);
+            const p = emptyProfile(servers[0]);
             startEdit(p);
           }}
           className="px-4 py-2 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-semibold flex items-center gap-1.5"
@@ -117,87 +152,111 @@ export const ProfilesView: React.FC = () => {
 
       {!editing ? (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          {profiles.map((p) => (
-            <div
-              key={p.id}
-              className="p-5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 space-y-4 shadow-sm"
-            >
-              <div className="flex items-start justify-between">
-                <div>
-                  <div className="flex items-center gap-2">
-                    <h3 className="font-bold text-base">{p.name}</h3>
-                    <span
-                      className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                        p.enabled ? 'bg-emerald-500/15 text-emerald-500' : 'bg-slate-500/15 text-slate-400'
-                      }`}
-                    >
-                      {p.enabled ? 'ON' : 'OFF'}
-                    </span>
+          {profiles.map((p) => {
+            const isDir = p.targetType === 'directory';
+            const fmtLabel =
+              p.format === 'zip' ? '.zip' : p.format === 'plain_gz' ? '.sql.gz' : '-Fc .backup';
+            return (
+              <div
+                key={p.id}
+                className="p-5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 space-y-4 shadow-sm"
+              >
+                <div className="flex items-start justify-between">
+                  <div>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <h3 className="font-bold text-base">{p.name}</h3>
+                      <span
+                        className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                          p.enabled ? 'bg-emerald-500/15 text-emerald-500' : 'bg-slate-500/15 text-slate-400'
+                        }`}
+                      >
+                        {p.enabled ? 'ON' : 'OFF'}
+                      </span>
+                      {isDir ? (
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-500/15 text-indigo-500">
+                          {t('profTargetDirectory')}
+                        </span>
+                      ) : (
+                        <span
+                          className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${engineBadgeClasses(
+                            p.serverEngine,
+                          )}`}
+                        >
+                          {engineLabel(p.serverEngine)}
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      {isDir ? t('profTargetDirectory') : p.serverName} • {fmtLabel}
+                    </p>
+                    <p className="text-xs text-cyan-700 dark:text-cyan-400 font-medium mt-1 flex items-center gap-1.5">
+                      <Clock className="w-3.5 h-3.5 shrink-0" />
+                      <span>{describeCron(p.scheduleCron, lang)}</span>
+                      <code className="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-500 font-mono">
+                        {p.scheduleCron}
+                      </code>
+                    </p>
                   </div>
-                  <p className="text-xs text-slate-500 mt-0.5">
-                    {p.serverName} • {p.format === 'plain_gz' ? '.sql.gz' : '-Fc .backup'}
-                  </p>
-                  <p className="text-xs text-cyan-700 dark:text-cyan-400 font-medium mt-1 flex items-center gap-1.5">
-                    <Clock className="w-3.5 h-3.5 shrink-0" />
-                    <span>{describeCron(p.scheduleCron, lang)}</span>
-                    <code className="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-500 font-mono">
-                      {p.scheduleCron}
-                    </code>
-                  </p>
+                  <div className="flex gap-1">
+                    <button
+                      onClick={() => runProfileNow(p.id)}
+                      className="p-2 rounded-lg bg-cyan-500/10 text-cyan-600 dark:text-cyan-400 hover:bg-cyan-500/20"
+                      title={t('profRunNow')}
+                    >
+                      <Play className="w-4 h-4" />
+                    </button>
+                    <button
+                      onClick={() => startEdit(p)}
+                      className="p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800"
+                    >
+                      <Edit3 className="w-4 h-4" />
+                    </button>
+                    <button
+                      onClick={() => handleDelete(p.id)}
+                      className="p-2 rounded-lg hover:bg-red-500/10 text-red-500"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
                 </div>
-                <div className="flex gap-1">
-                  <button
-                    onClick={() => runProfileNow(p.id)}
-                    className="p-2 rounded-lg bg-cyan-500/10 text-cyan-600 dark:text-cyan-400 hover:bg-cyan-500/20"
-                    title={t('profRunNow')}
-                  >
-                    <Play className="w-4 h-4" />
-                  </button>
-                  <button
-                    onClick={() => startEdit(p)}
-                    className="p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800"
-                  >
-                    <Edit3 className="w-4 h-4" />
-                  </button>
-                  <button
-                    onClick={() => handleDelete(p.id)}
-                    className="p-2 rounded-lg hover:bg-red-500/10 text-red-500"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
-                </div>
-              </div>
 
-              <div className="grid grid-cols-2 gap-3 text-xs p-3 rounded-xl bg-slate-50 dark:bg-slate-950/60">
-                <div>
-                  <span className="text-slate-400 block text-[11px]">{t('profLocalRet')}</span>
-                  <b>
-                    {p.localRetentionValue} {p.localRetentionMode === 'days' ? 'days' : 'copies'}
-                  </b>
+                <div className="grid grid-cols-2 gap-3 text-xs p-3 rounded-xl bg-slate-50 dark:bg-slate-950/60">
+                  <div>
+                    <span className="text-slate-400 block text-[11px]">{t('profLocalRet')}</span>
+                    <b>
+                      {p.localRetentionValue} {p.localRetentionMode === 'days' ? 'days' : 'copies'}
+                    </b>
+                  </div>
+                  <div>
+                    <span className="text-slate-400 block text-[11px]">Google Drive</span>
+                    <b>
+                      {p.driveEnabled
+                        ? `${p.driveRetentionValue} ${p.driveRetentionMode === 'days' ? 'days' : 'copies'}`
+                        : 'Disabled'}
+                    </b>
+                  </div>
                 </div>
-                <div>
-                  <span className="text-slate-400 block text-[11px]">Google Drive</span>
-                  <b>
-                    {p.driveEnabled
-                      ? `${p.driveRetentionValue} ${p.driveRetentionMode === 'days' ? 'days' : 'copies'}`
-                      : 'Disabled'}
-                  </b>
-                </div>
-              </div>
 
-              <div className="text-xs text-slate-500">
-                {p.selectionMode === 'all_auto' ? (
-                  <span className="text-emerald-600 dark:text-emerald-400 font-medium">
-                    ★ {t('profModeAutoAll')} ({p.excludedDatabases.length} excl.)
-                  </span>
-                ) : (
-                  <span>
-                    DBs ({p.includedDatabases.length}): {p.includedDatabases.join(', ') || '—'}
-                  </span>
-                )}
+                <div className="text-xs text-slate-500">
+                  {p.selectionMode === 'all_auto' ? (
+                    <span className="text-emerald-600 dark:text-emerald-400 font-medium">
+                      ★ {t('profModeAutoAll')} (
+                      {isDir ? p.excludedDirectories.length : p.excludedDatabases.length} excl.)
+                    </span>
+                  ) : isDir ? (
+                    <span>
+                      Dirs ({p.includedDirectories.length}):{' '}
+                      {p.includedDirectories.map(dirNameById).join(', ') || '—'}
+                    </span>
+                  ) : (
+                    <span>
+                      DBs ({p.includedDatabases.length}): {p.includedDatabases.join(', ') || '—'}
+                    </span>
+                  )}
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       ) : (
         <form
@@ -217,6 +276,52 @@ export const ProfilesView: React.FC = () => {
             </label>
           </div>
 
+          <div>
+            <label className="block text-xs font-semibold mb-1.5">{t('profTargetType')}</label>
+            <div className="grid grid-cols-2 gap-3 max-w-md">
+              <button
+                type="button"
+                onClick={() => {
+                  const srv = servers[0];
+                  setEditing({
+                    ...editing,
+                    targetType: 'database',
+                    pgServerId: srv?.id || 0,
+                    serverEngine: srv?.engine || 'postgres',
+                    format: isMySQLFamily(srv?.engine) ? 'plain_gz' : 'custom',
+                  });
+                  if (srv) void loadDBsForServer(srv.id);
+                }}
+                className={`px-3.5 py-2.5 rounded-xl border text-xs font-semibold flex items-center justify-center gap-2 transition ${
+                  editing.targetType === 'database'
+                    ? 'bg-cyan-600 border-cyan-600 text-white'
+                    : 'border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800'
+                }`}
+              >
+                <Database className="w-4 h-4" /> {t('profTargetDatabase')}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setServerDBs([]);
+                  setEditing({
+                    ...editing,
+                    targetType: 'directory',
+                    pgServerId: 0,
+                    format: 'zip',
+                  });
+                }}
+                className={`px-3.5 py-2.5 rounded-xl border text-xs font-semibold flex items-center justify-center gap-2 transition ${
+                  editing.targetType === 'directory'
+                    ? 'bg-indigo-600 border-indigo-600 text-white'
+                    : 'border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800'
+                }`}
+              >
+                <FolderArchive className="w-4 h-4" /> {t('profTargetDirectory')}
+              </button>
+            </div>
+          </div>
+
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div>
               <label className="block text-xs font-semibold mb-1">{t('profName')}</label>
@@ -227,34 +332,57 @@ export const ProfilesView: React.FC = () => {
                 className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-sm"
               />
             </div>
-            <div>
-              <label className="block text-xs font-semibold mb-1">PostgreSQL Server</label>
-              <select
-                value={editing.pgServerId}
-                onChange={(e) => {
-                  const id = Number(e.target.value);
-                  setEditing({ ...editing, pgServerId: id, includedDatabases: [], excludedDatabases: [] });
-                  void loadDBsForServer(id);
-                }}
-                className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-sm"
-              >
-                {servers.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.name} ({s.host}:{s.port})
-                  </option>
-                ))}
-              </select>
-            </div>
+
+            {editing.targetType === 'database' && (
+              <div>
+                <label className="block text-xs font-semibold mb-1">{t('profServerSelect')}</label>
+                <select
+                  value={editing.pgServerId}
+                  onChange={(e) => {
+                    const id = Number(e.target.value);
+                    const srv = servers.find((s) => s.id === id);
+                    const mysqlFam = isMySQLFamily(srv?.engine);
+                    setEditing({
+                      ...editing,
+                      pgServerId: id,
+                      serverEngine: srv?.engine || 'postgres',
+                      format: mysqlFam ? 'plain_gz' : editing.format === 'zip' ? 'custom' : editing.format,
+                      includedDatabases: [],
+                      excludedDatabases: [],
+                    });
+                    void loadDBsForServer(id);
+                  }}
+                  className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-sm"
+                >
+                  {servers.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      [{engineLabel(s.engine)}] {s.name} ({s.host}:{s.port})
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
             <div>
               <label className="block text-xs font-semibold mb-1">{t('profFormat')}</label>
-              <select
-                value={editing.format}
-                onChange={(e) => setEditing({ ...editing, format: e.target.value as 'custom' | 'plain_gz' })}
-                className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-xs"
-              >
-                <option value="custom">{t('profFormatCustom')}</option>
-                <option value="plain_gz">{t('profFormatPlainGz')}</option>
-              </select>
+              {editing.targetType === 'directory' ? (
+                <div className="px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-xs font-medium text-slate-600 dark:text-slate-300">
+                  {t('profFormatZip')}
+                </div>
+              ) : selectedServerIsMySQL ? (
+                <div className="px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-xs font-medium text-slate-600 dark:text-slate-300">
+                  {t('profFormatPlainGz')}
+                </div>
+              ) : (
+                <select
+                  value={editing.format}
+                  onChange={(e) => setEditing({ ...editing, format: e.target.value as 'custom' | 'plain_gz' })}
+                  className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-xs"
+                >
+                  <option value="custom">{t('profFormatCustom')}</option>
+                  <option value="plain_gz">{t('profFormatPlainGz')}</option>
+                </select>
+              )}
             </div>
           </div>
 
@@ -336,7 +464,9 @@ export const ProfilesView: React.FC = () => {
           </div>
 
           <div className="space-y-2">
-            <label className="block text-xs font-semibold">{t('profSelectionMode')}</label>
+            <label className="block text-xs font-semibold">
+              {editing.targetType === 'directory' ? t('profDirSelectionMode') : t('profSelectionMode')}
+            </label>
             <select
               value={editing.selectionMode}
               onChange={(e) => setEditing({ ...editing, selectionMode: e.target.value as 'manual' | 'all_auto' })}
@@ -346,41 +476,84 @@ export const ProfilesView: React.FC = () => {
               <option value="all_auto">{t('profModeAutoAll')}</option>
             </select>
 
-            <div className="max-h-48 overflow-y-auto rounded-xl border border-slate-200 dark:border-slate-800 grid grid-cols-2 md:grid-cols-3 gap-1 p-2">
-              {serverDBs.map((db) => {
-                const isManual = editing.selectionMode === 'manual';
-                const list = isManual ? editing.includedDatabases : editing.excludedDatabases;
-                const checked = list.includes(db.name);
-                return (
-                  <label
-                    key={db.name}
-                    className="px-3 py-2 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-800/60 flex items-center justify-between text-xs cursor-pointer"
-                  >
-                    <span className="truncate">
-                      <b>{db.name}</b> <span className="text-[10px] text-slate-400">({formatBytes(db.sizeBytes)})</span>
-                    </span>
-                    <input
-                      type="checkbox"
-                      checked={checked}
-                      onChange={(e) => {
-                        const updated = e.target.checked ? [...list, db.name] : list.filter((x) => x !== db.name);
-                        setEditing(
-                          isManual
-                            ? { ...editing, includedDatabases: updated }
-                            : { ...editing, excludedDatabases: updated },
-                        );
-                      }}
-                      className="accent-cyan-600 ml-2"
-                    />
-                  </label>
-                );
-              })}
-            </div>
+            {editing.targetType === 'directory' ? (
+              <div className="max-h-48 overflow-y-auto rounded-xl border border-slate-200 dark:border-slate-800 grid grid-cols-1 md:grid-cols-2 gap-1 p-2">
+                {directories.length === 0 ? (
+                  <div className="p-3 text-xs text-slate-400 col-span-2">{t('dirEmptyCatalog')}</div>
+                ) : (
+                  directories.map((dir) => {
+                    const isManual = editing.selectionMode === 'manual';
+                    const list = isManual ? editing.includedDirectories : editing.excludedDirectories;
+                    const checked = list.includes(dir.directoryId);
+                    return (
+                      <label
+                        key={dir.directoryId}
+                        className="px-3 py-2 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-800/60 flex items-center justify-between text-xs cursor-pointer"
+                      >
+                        <span className="truncate">
+                          <b>{dir.name}</b>{' '}
+                          <span className="text-[10px] text-slate-400 font-mono">
+                            ({dir.path} • {formatBytes(dir.liveSizeBytes)})
+                          </span>
+                        </span>
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={(e) => {
+                            const updated = e.target.checked
+                              ? [...list, dir.directoryId]
+                              : list.filter((x) => x !== dir.directoryId);
+                            setEditing(
+                              isManual
+                                ? { ...editing, includedDirectories: updated }
+                                : { ...editing, excludedDirectories: updated },
+                            );
+                          }}
+                          className="accent-indigo-600 ml-2"
+                        />
+                      </label>
+                    );
+                  })
+                )}
+              </div>
+            ) : (
+              <div className="max-h-48 overflow-y-auto rounded-xl border border-slate-200 dark:border-slate-800 grid grid-cols-2 md:grid-cols-3 gap-1 p-2">
+                {serverDBs.map((db) => {
+                  const isManual = editing.selectionMode === 'manual';
+                  const list = isManual ? editing.includedDatabases : editing.excludedDatabases;
+                  const checked = list.includes(db.name);
+                  return (
+                    <label
+                      key={db.name}
+                      className="px-3 py-2 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-800/60 flex items-center justify-between text-xs cursor-pointer"
+                    >
+                      <span className="truncate">
+                        <b>{db.name}</b> <span className="text-[10px] text-slate-400">({formatBytes(db.sizeBytes)})</span>
+                      </span>
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={(e) => {
+                          const updated = e.target.checked ? [...list, db.name] : list.filter((x) => x !== db.name);
+                          setEditing(
+                            isManual
+                              ? { ...editing, includedDatabases: updated }
+                              : { ...editing, excludedDatabases: updated },
+                          );
+                        }}
+                        className="accent-cyan-600 ml-2"
+                      />
+                    </label>
+                  );
+                })}
+              </div>
+            )}
+
             {editing.selectionMode === 'all_auto' && (
               <p className="text-[11px] text-amber-500">
                 {lang === 'es'
-                  ? 'En modo automático, marca únicamente las bases que quieras EXCLUIR.'
-                  : 'In auto-include mode, check only the databases you want to EXCLUDE.'}
+                  ? 'En modo automático, marca únicamente los elementos que quieras EXCLUIR.'
+                  : 'In auto-include mode, check only the items you want to EXCLUDE.'}
               </p>
             )}
           </div>

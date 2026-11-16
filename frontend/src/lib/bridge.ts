@@ -16,9 +16,12 @@ export interface LiveEvent {
   timestamp: string;
 }
 
+export type DBEngine = 'postgres' | 'mariadb' | 'mysql';
+
 export interface PGServer {
   id: number;
   name: string;
+  engine?: DBEngine;
   host: string;
   port: number;
   username: string;
@@ -28,18 +31,47 @@ export interface PGServer {
   isDefault: boolean;
 }
 
+export interface BackupDirectory {
+  id: number;
+  name: string;
+  path: string;
+  excludePatterns: string[];
+  createdAt?: string;
+}
+
+export interface DirectoryBackupSummary {
+  directoryId: number;
+  name: string;
+  path: string;
+  excludePatterns: string[];
+  exists: boolean;
+  liveSizeBytes: number;
+  liveFileCount: number;
+  assignedProfiles: string[];
+  totalCopies: number;
+  localCopies: number;
+  cloudCopies: number;
+  lastBackupAt: string;
+  lastLocalStatus: string;
+  lastCloudStatus: string;
+}
+
 export interface BackupProfile {
   id: number;
   name: string;
+  targetType: 'database' | 'directory';
   pgServerId: number;
   serverName?: string;
+  serverEngine?: string;
   enabled: boolean;
   scheduleCron: string;
   scheduleLabel: string;
-  format: 'custom' | 'plain_gz';
+  format: 'custom' | 'plain_gz' | 'zip';
   selectionMode: 'manual' | 'all_auto';
   includedDatabases: string[];
   excludedDatabases: string[];
+  includedDirectories: number[];
+  excludedDirectories: number[];
   localDirOverride: string;
   localRetentionMode: 'count' | 'days';
   localRetentionValue: number;
@@ -54,8 +86,11 @@ export interface BackupExecution {
   id: number;
   profileId?: number;
   profileName: string;
+  targetType: string;
+  serverEngine: string;
   pgServerId: number;
   serverName: string;
+  directoryId: number;
   dbName: string;
   triggerType: string;
   format: string;
@@ -71,6 +106,7 @@ export interface BackupExecution {
   retryCount: number;
   nextRetryAt: string;
   errorMessage: string;
+  warningMessage: string;
   deletedLocalAt: string;
   deletedCloudAt: string;
 }
@@ -78,6 +114,7 @@ export interface BackupExecution {
 export interface DatabaseBackupSummary {
   serverId: number;
   serverName: string;
+  serverEngine: string;
   dbName: string;
   liveSizeBytes: number;
   assignedProfiles: string[];
@@ -223,4 +260,26 @@ export function formatDateTime(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
   return d.toLocaleString();
+}
+
+export function engineLabel(engine?: string): string {
+  switch ((engine || 'postgres').toLowerCase()) {
+    case 'mariadb':
+      return 'MariaDB';
+    case 'mysql':
+      return 'MySQL';
+    default:
+      return 'PostgreSQL';
+  }
+}
+
+export function engineBadgeClasses(engine?: string): string {
+  switch ((engine || 'postgres').toLowerCase()) {
+    case 'mariadb':
+      return 'bg-amber-500/15 text-amber-600 dark:text-amber-400';
+    case 'mysql':
+      return 'bg-blue-500/15 text-blue-600 dark:text-blue-400';
+    default:
+      return 'bg-cyan-500/15 text-cyan-600 dark:text-cyan-400';
+  }
 }

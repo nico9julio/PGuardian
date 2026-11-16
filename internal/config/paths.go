@@ -46,6 +46,10 @@ func DBSnapshotsDir() string {
 	return filepath.Join(UpdatesDir(), "db_snapshots")
 }
 
+func TempDir() string {
+	return filepath.Join(DataRoot(), "tmp")
+}
+
 // EnsureDirectories creates all required application data subdirectories.
 func EnsureDirectories() error {
 	dirs := []string{
@@ -55,6 +59,7 @@ func EnsureDirectories() error {
 		StagingDir(),
 		RollbackDir(),
 		DBSnapshotsDir(),
+		TempDir(),
 	}
 	for _, d := range dirs {
 		if err := os.MkdirAll(d, 0750); err != nil {

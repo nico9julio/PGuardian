@@ -17,7 +17,7 @@ func main() {
 	app := NewApp()
 
 	err := wails.Run(&options.App{
-		Title:            "PGuardian — PostgreSQL Backup Manager",
+		Title:            "PGuardian — Backup Manager",
 		Width:            1240,
 		Height:           820,
 		MinWidth:         980,

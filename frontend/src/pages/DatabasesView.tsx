@@ -4,6 +4,8 @@ import {
   apiCall,
   BackupExecution,
   DatabaseBackupSummary,
+  engineBadgeClasses,
+  engineLabel,
   formatBytes,
   formatDateTime,
   nativeBridge,
@@ -103,7 +105,16 @@ export const DatabasesView: React.FC = () => {
                       <Database className="w-5 h-5" />
                     </div>
                     <div>
-                      <h3 className="font-bold text-sm">{item.dbName}</h3>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <h3 className="font-bold text-sm">{item.dbName}</h3>
+                        <span
+                          className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${engineBadgeClasses(
+                            item.serverEngine,
+                          )}`}
+                        >
+                          {engineLabel(item.serverEngine)}
+                        </span>
+                      </div>
                       <span className="text-[11px] text-slate-400">
                         {item.serverName} • {t('dbSizeLive')}: <b>{formatBytes(item.liveSizeBytes)}</b>
                       </span>

@@ -13,7 +13,7 @@ import {
   RefreshCw,
   X,
 } from 'lucide-react';
-import { apiCall, DriveStatus, formatBytes, nativeBridge, ServerUserSession, setAuthToken } from '../lib/bridge';
+import { apiCall, DBEngine, DriveStatus, engineLabel, formatBytes, nativeBridge, ServerUserSession, setAuthToken } from '../lib/bridge';
 import { useApp } from '../context/AppContext';
 import { DriveFolderModal } from '../components/DriveFolderModal';
 import { TelegramGuide } from '../components/TelegramGuide';
@@ -34,13 +34,16 @@ export const SetupWizard: React.FC<Props> = ({ onComplete }) => {
   const [pin, setPin] = useState('');
   const [pinConfirm, setPinConfirm] = useState('');
 
-  // Step 2: Postgres
+  // Step 2: Database Server
+  const [skipServer, setSkipServer] = useState(false);
+  const [dbEngine, setDbEngine] = useState<DBEngine>('postgres');
   const [pgHost, setPgHost] = useState('127.0.0.1');
   const [pgPort, setPgPort] = useState(5432);
   const [pgUser, setPgUser] = useState('postgres');
   const [pgPassword, setPgPassword] = useState('');
   const [pgDumpPath, setPgDumpPath] = useState('');
-  const [detectedBins, setDetectedBins] = useState<{ path: string; version: string }[]>([]);
+  const [pgBins, setPgBins] = useState<{ path: string; version: string }[]>([]);
+  const [mysqlBins, setMysqlBins] = useState<{ path: string; version: string }[]>([]);
   const [pgTestedVersion, setPgTestedVersion] = useState('');
   const [previewDBs, setPreviewDBs] = useState<{ name: string; sizeBytes: number }[]>([]);
 
@@ -74,9 +77,13 @@ export const SetupWizard: React.FC<Props> = ({ onComplete }) => {
   useEffect(() => {
     void (async () => {
       try {
-        const bins = await apiCall<{ path: string; version: string }[]>('GET', '/api/v1/postgres/discover');
-        setDetectedBins(bins);
-        if (bins.length > 0) setPgDumpPath(bins[0].path);
+        const [pBins, mBins] = await Promise.all([
+          apiCall<{ path: string; version: string }[]>('GET', '/api/v1/postgres/discover'),
+          apiCall<{ path: string; version: string }[]>('GET', '/api/v1/mysql/discover'),
+        ]);
+        setPgBins(pBins || []);
+        setMysqlBins(mBins || []);
+        if ((pBins || []).length > 0) setPgDumpPath(pBins[0].path);
       } catch {}
       try {
         const users = await apiCall<ServerUserSession[]>('GET', '/api/v1/windows-users');
@@ -91,6 +98,23 @@ export const SetupWizard: React.FC<Props> = ({ onComplete }) => {
     })();
   }, []);
 
+  const selectWizardEngine = (next: DBEngine) => {
+    setSkipServer(false);
+    const prevIsMySQL = dbEngine === 'mariadb' || dbEngine === 'mysql';
+    const nextIsMySQL = next === 'mariadb' || next === 'mysql';
+    setDbEngine(next);
+    setPgTestedVersion('');
+    setPreviewDBs([]);
+    setSelectedDBs([]);
+    if (prevIsMySQL !== nextIsMySQL) {
+      setPgPort(nextIsMySQL ? 3306 : 5432);
+      setPgUser(nextIsMySQL ? 'root' : 'postgres');
+      const nextBins = nextIsMySQL ? mysqlBins : pgBins;
+      setPgDumpPath(nextBins[0]?.path || '');
+      setProfFormat(nextIsMySQL ? 'plain_gz' : 'custom');
+    }
+  };
+
   const refreshDriveStatus = async () => {
     try {
       const ds = await apiCall<DriveStatus>('GET', '/api/v1/cloud/status');
@@ -103,6 +127,7 @@ export const SetupWizard: React.FC<Props> = ({ onComplete }) => {
     setErr('');
     try {
       const res = await apiCall<{ version: string }>('POST', '/api/v1/postgres/test', {
+        engine: dbEngine,
         host: pgHost,
         port: pgPort,
         username: pgUser,
@@ -110,6 +135,7 @@ export const SetupWizard: React.FC<Props> = ({ onComplete }) => {
       });
       setPgTestedVersion(res.version);
       const dbs = await apiCall<{ name: string; sizeBytes: number }[]>('POST', '/api/v1/postgres/databases-preview', {
+        engine: dbEngine,
         host: pgHost,
         port: pgPort,
         username: pgUser,
@@ -176,38 +202,47 @@ export const SetupWizard: React.FC<Props> = ({ onComplete }) => {
     setBusy(true);
     setErr('');
     try {
+      const serverPayload = skipServer
+        ? {}
+        : {
+            name: `${engineLabel(dbEngine)} Principal`,
+            engine: dbEngine,
+            host: pgHost,
+            port: pgPort,
+            username: pgUser,
+            password: pgPassword,
+            pgDumpPath,
+            isDefault: true,
+          };
+      const profilePayload = skipServer
+        ? {}
+        : {
+            name: profName,
+            targetType: 'database',
+            enabled: true,
+            scheduleCron: profCron,
+            scheduleLabel: describeCron(profCron, lang),
+            format: dbEngine === 'mariadb' || dbEngine === 'mysql' ? 'plain_gz' : profFormat,
+            selectionMode: selMode,
+            includedDatabases: selMode === 'manual' ? selectedDBs : [],
+            excludedDatabases: [],
+            localRetentionMode: 'count',
+            localRetentionValue: localKeep,
+            driveEnabled: Boolean(driveStatus?.connected),
+            driveFolderId: driveStatus?.rootFolderId || '',
+            driveFolderPath: driveStatus?.rootFolderName || '',
+            driveRetentionMode: 'count',
+            driveRetentionValue: driveKeep,
+          };
+
       const res = await apiCall<{ token: string }>('POST', '/api/v1/setup/complete', {
         language: lang,
         theme,
         masterPassword: pin,
         localBackupRoot: localRoot,
         minFreeDiskGb: minFreeGB,
-        server: {
-          name: 'PostgreSQL Principal',
-          host: pgHost,
-          port: pgPort,
-          username: pgUser,
-          password: pgPassword,
-          pgDumpPath,
-          isDefault: true,
-        },
-        initialProfile: {
-          name: profName,
-          enabled: true,
-          scheduleCron: profCron,
-          scheduleLabel: describeCron(profCron, lang),
-          format: profFormat,
-          selectionMode: selMode,
-          includedDatabases: selMode === 'manual' ? selectedDBs : [],
-          excludedDatabases: [],
-          localRetentionMode: 'count',
-          localRetentionValue: localKeep,
-          driveEnabled: Boolean(driveStatus?.connected),
-          driveFolderId: driveStatus?.rootFolderId || '',
-          driveFolderPath: driveStatus?.rootFolderName || '',
-          driveRetentionMode: 'count',
-          driveRetentionValue: driveKeep,
-        },
+        server: serverPayload,
+        initialProfile: profilePayload,
         telegramBotToken: tgToken,
         telegramChatId: tgChatId,
         telegramChatLabel: tgChatLabel,
@@ -335,85 +370,125 @@ export const SetupWizard: React.FC<Props> = ({ onComplete }) => {
 
           {step === 2 && (
             <div className="space-y-4">
-              <div className="grid grid-cols-3 gap-4">
-                <div className="col-span-2">
-                  <label className="block text-xs font-semibold mb-1">Host</label>
-                  <input
-                    value={pgHost}
-                    onChange={(e) => setPgHost(e.target.value)}
-                    className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-sm"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold mb-1">Port</label>
-                  <input
-                    type="number"
-                    value={pgPort}
-                    onChange={(e) => setPgPort(Number(e.target.value))}
-                    className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-sm"
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-semibold mb-1">Username</label>
-                  <input
-                    value={pgUser}
-                    onChange={(e) => setPgUser(e.target.value)}
-                    className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-sm"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold mb-1">Password</label>
-                  <input
-                    type="password"
-                    value={pgPassword}
-                    onChange={(e) => setPgPassword(e.target.value)}
-                    className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-sm"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold mb-1">Ruta de pg_dump.exe</label>
-                <div className="flex gap-2">
-                  <input
-                    value={pgDumpPath}
-                    onChange={(e) => setPgDumpPath(e.target.value)}
-                    className="flex-1 px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-xs font-mono"
-                  />
-                  {detectedBins.length > 0 && (
-                    <select
-                      onChange={(e) => setPgDumpPath(e.target.value)}
-                      value={pgDumpPath}
-                      className="px-2 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 text-xs"
-                    >
-                      {detectedBins.map((b) => (
-                        <option key={b.path} value={b.path}>
-                          {b.version}
-                        </option>
-                      ))}
-                    </select>
-                  )}
-                </div>
-              </div>
-
-              <div className="flex items-center gap-4 pt-2">
+              <div className="grid grid-cols-4 gap-2">
+                {(['postgres', 'mariadb', 'mysql'] as const).map((eng) => (
+                  <button
+                    key={eng}
+                    type="button"
+                    onClick={() => selectWizardEngine(eng)}
+                    className={`px-3 py-2 rounded-xl border text-xs font-semibold transition ${
+                      !skipServer && dbEngine === eng
+                        ? 'bg-cyan-600 border-cyan-600 text-white'
+                        : 'border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800'
+                    }`}
+                  >
+                    {engineLabel(eng)}
+                  </button>
+                ))}
                 <button
                   type="button"
-                  onClick={testPGAndLoadDBs}
-                  disabled={busy}
-                  className="px-4 py-2.5 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-semibold"
+                  onClick={() => setSkipServer(true)}
+                  className={`px-3 py-2 rounded-xl border text-xs font-semibold transition ${
+                    skipServer
+                      ? 'bg-slate-700 border-slate-700 text-white'
+                      : 'border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800'
+                  }`}
                 >
-                  {t('srvTestConn')}
+                  {lang === 'es' ? 'Configurar luego' : 'Configure later'}
                 </button>
-                {pgTestedVersion && (
-                  <span className="text-xs text-emerald-600 dark:text-emerald-400 flex items-center gap-1.5 font-medium">
-                    <CheckCircle2 className="w-4 h-4" /> {pgTestedVersion.slice(0, 55)} ({previewDBs.length} DBs)
-                  </span>
-                )}
               </div>
+
+              {skipServer ? (
+                <div className="p-5 rounded-xl bg-slate-50 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800 text-xs text-slate-500">
+                  {lang === 'es'
+                    ? 'Puedes continuar sin registrar un servidor de base de datos ahora (útil si solo quieres respaldar directorios o agregar servidores después desde el panel).'
+                    : 'You can skip database server setup for now (useful if you only want to back up directories or add servers later).'}
+                </div>
+              ) : (
+                <>
+                  <div className="grid grid-cols-3 gap-4">
+                    <div className="col-span-2">
+                      <label className="block text-xs font-semibold mb-1">Host</label>
+                      <input
+                        value={pgHost}
+                        onChange={(e) => setPgHost(e.target.value)}
+                        className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-sm"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold mb-1">Port</label>
+                      <input
+                        type="number"
+                        value={pgPort}
+                        onChange={(e) => setPgPort(Number(e.target.value))}
+                        className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-sm"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-xs font-semibold mb-1">Username</label>
+                      <input
+                        value={pgUser}
+                        onChange={(e) => setPgUser(e.target.value)}
+                        className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-sm"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold mb-1">Password</label>
+                      <input
+                        type="password"
+                        value={pgPassword}
+                        onChange={(e) => setPgPassword(e.target.value)}
+                        className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-sm"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold mb-1">
+                      {dbEngine === 'mariadb' || dbEngine === 'mysql' ? t('srvDumpPathMySQL') : t('srvDumpPathPG')}
+                    </label>
+                    <div className="flex gap-2">
+                      <input
+                        value={pgDumpPath}
+                        onChange={(e) => setPgDumpPath(e.target.value)}
+                        className="flex-1 px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-xs font-mono"
+                      />
+                      {(dbEngine === 'mariadb' || dbEngine === 'mysql' ? mysqlBins : pgBins).length > 0 && (
+                        <select
+                          onChange={(e) => setPgDumpPath(e.target.value)}
+                          value={pgDumpPath}
+                          className="px-2 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 text-xs max-w-[260px]"
+                        >
+                          {(dbEngine === 'mariadb' || dbEngine === 'mysql' ? mysqlBins : pgBins).map((b) => (
+                            <option key={b.path} value={b.path}>
+                              {b.version}
+                            </option>
+                          ))}
+                        </select>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-4 pt-2">
+                    <button
+                      type="button"
+                      onClick={testPGAndLoadDBs}
+                      disabled={busy}
+                      className="px-4 py-2.5 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-semibold"
+                    >
+                      {t('srvTestConn')}
+                    </button>
+                    {pgTestedVersion && (
+                      <span className="text-xs text-emerald-600 dark:text-emerald-400 flex items-center gap-1.5 font-medium">
+                        <CheckCircle2 className="w-4 h-4" /> {pgTestedVersion.slice(0, 55)} ({previewDBs.length} DBs)
+                      </span>
+                    )}
+                  </div>
+                </>
+              )}
             </div>
           )}
 
@@ -594,6 +669,20 @@ export const SetupWizard: React.FC<Props> = ({ onComplete }) => {
           )}
 
           {step === 6 && (
+            skipServer ? (
+              <div className="p-6 rounded-xl bg-slate-50 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800 text-xs text-slate-500 space-y-2 max-w-xl mx-auto">
+                <p className="font-semibold text-slate-700 dark:text-slate-200">
+                  {lang === 'es'
+                    ? 'Listo para iniciar PGuardian'
+                    : 'Ready to launch PGuardian'}
+                </p>
+                <p>
+                  {lang === 'es'
+                    ? 'Al finalizar podrás agregar servidores PostgreSQL / MariaDB / MySQL, registrar directorios y crear tus perfiles de respaldo programados.'
+                    : 'Once finished, you can add PostgreSQL / MariaDB / MySQL servers, register directories, and create scheduled backup profiles.'}
+                </p>
+              </div>
+            ) : (
             <div className="space-y-4">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div className="space-y-3">
@@ -608,14 +697,20 @@ export const SetupWizard: React.FC<Props> = ({ onComplete }) => {
                   <div className="grid grid-cols-3 gap-3">
                     <div>
                       <label className="block text-xs font-semibold mb-1">{t('profFormat')}</label>
-                      <select
-                        value={profFormat}
-                        onChange={(e) => setProfFormat(e.target.value as 'custom' | 'plain_gz')}
-                        className="w-full px-2.5 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-xs"
-                      >
-                        <option value="custom">Custom (-Fc .backup)</option>
-                        <option value="plain_gz">SQL Gzip (.sql.gz)</option>
-                      </select>
+                      {dbEngine === 'mariadb' || dbEngine === 'mysql' ? (
+                        <div className="px-2.5 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-xs">
+                          SQL Gzip (.sql.gz)
+                        </div>
+                      ) : (
+                        <select
+                          value={profFormat}
+                          onChange={(e) => setProfFormat(e.target.value as 'custom' | 'plain_gz')}
+                          className="w-full px-2.5 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-xs"
+                        >
+                          <option value="custom">Custom (-Fc .backup)</option>
+                          <option value="plain_gz">SQL Gzip (.sql.gz)</option>
+                        </select>
+                      )}
                     </div>
                     <div>
                       <label className="block text-xs font-semibold mb-1">{t('profLocalRet')}</label>
@@ -687,6 +782,7 @@ export const SetupWizard: React.FC<Props> = ({ onComplete }) => {
                 onChange={(cronExpr) => setProfCron(cronExpr)}
               />
             </div>
+            )
           )}
         </div>
 

@@ -1,6 +1,25 @@
 import React, { useEffect, useState } from 'react';
-import { CheckCircle2, Cloud, AlertTriangle, HardDrive, Activity, FolderOpen, RefreshCw } from 'lucide-react';
-import { apiCall, BackupExecution, DriveStatus, formatBytes, formatDateTime, nativeBridge } from '../lib/bridge';
+import {
+  CheckCircle2,
+  Cloud,
+  AlertTriangle,
+  HardDrive,
+  Activity,
+  FolderOpen,
+  RefreshCw,
+  Database,
+  FolderArchive,
+} from 'lucide-react';
+import {
+  apiCall,
+  BackupExecution,
+  DriveStatus,
+  engineBadgeClasses,
+  engineLabel,
+  formatBytes,
+  formatDateTime,
+  nativeBridge,
+} from '../lib/bridge';
 import { useApp } from '../context/AppContext';
 
 interface DashboardData {
@@ -150,7 +169,7 @@ export const DashboardView: React.FC = () => {
             <table className="w-full text-xs">
               <thead className="bg-slate-50 dark:bg-slate-950/60 text-slate-500 text-left">
                 <tr>
-                  <th className="px-4 py-3">Database</th>
+                  <th className="px-4 py-3">Target</th>
                   <th className="px-4 py-3">Profile</th>
                   <th className="px-4 py-3">Started</th>
                   <th className="px-4 py-3">Size</th>
@@ -162,12 +181,35 @@ export const DashboardView: React.FC = () => {
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800/70">
                 {data.recentBackups.map((ex) => (
                   <tr key={ex.id} className="hover:bg-slate-50/70 dark:hover:bg-slate-800/40">
-                    <td className="px-4 py-3 font-semibold">{ex.dbName}</td>
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-2">
+                        {ex.targetType === 'directory' ? (
+                          <FolderArchive className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
+                        ) : (
+                          <Database className="w-3.5 h-3.5 text-cyan-500 shrink-0" />
+                        )}
+                        <span className="font-semibold">{ex.dbName}</span>
+                        <span
+                          className={`px-1.5 py-0.5 rounded-full text-[9px] font-bold ${
+                            ex.targetType === 'directory'
+                              ? 'bg-indigo-500/15 text-indigo-500'
+                              : engineBadgeClasses(ex.serverEngine)
+                          }`}
+                        >
+                          {ex.targetType === 'directory' ? 'DIR' : engineLabel(ex.serverEngine)}
+                        </span>
+                      </div>
+                    </td>
                     <td className="px-4 py-3 text-slate-500">{ex.profileName || ex.triggerType}</td>
                     <td className="px-4 py-3 text-slate-500">{formatDateTime(ex.startedAt)}</td>
                     <td className="px-4 py-3 font-mono">{formatBytes(ex.fileSizeBytes)}</td>
                     <td className="px-4 py-3">
                       <StatusBadge status={ex.localStatus} />
+                      {ex.warningMessage && (
+                        <div className="text-[10px] text-amber-500 max-w-[180px] truncate mt-0.5" title={ex.warningMessage}>
+                          ⚠ {ex.warningMessage}
+                        </div>
+                      )}
                     </td>
                     <td className="px-4 py-3">
                       <StatusBadge status={ex.cloudStatus} />

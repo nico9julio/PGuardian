@@ -3,13 +3,14 @@ package database
 import "time"
 
 type DashboardMetrics struct {
-	TotalExecutions24h int   `json:"totalExecutions24h"`
-	Success24h         int   `json:"success24h"`
-	Failed24h          int   `json:"failed24h"`
-	PendingCloudCount  int   `json:"pendingCloudCount"`
-	TotalLocalBytes    int64 `json:"totalLocalBytes"`
-	ActiveProfiles     int   `json:"activeProfiles"`
-	ConfiguredServers  int   `json:"configuredServers"`
+	TotalExecutions24h    int   `json:"totalExecutions24h"`
+	Success24h            int   `json:"success24h"`
+	Failed24h             int   `json:"failed24h"`
+	PendingCloudCount     int   `json:"pendingCloudCount"`
+	TotalLocalBytes       int64 `json:"totalLocalBytes"`
+	ActiveProfiles        int   `json:"activeProfiles"`
+	ConfiguredServers     int   `json:"configuredServers"`
+	ConfiguredDirectories int   `json:"configuredDirectories"`
 }
 
 func (s *Store) GetDashboardMetrics() (DashboardMetrics, error) {
@@ -23,6 +24,7 @@ func (s *Store) GetDashboardMetrics() (DashboardMetrics, error) {
 	_ = s.db.QueryRow(`SELECT COALESCE(SUM(file_size_bytes), 0) FROM backup_executions WHERE local_status = 'completed' AND deleted_local_at = ''`).Scan(&m.TotalLocalBytes)
 	_ = s.db.QueryRow(`SELECT COUNT(1) FROM backup_profiles WHERE enabled = 1`).Scan(&m.ActiveProfiles)
 	_ = s.db.QueryRow(`SELECT COUNT(1) FROM pg_servers`).Scan(&m.ConfiguredServers)
+	_ = s.db.QueryRow(`SELECT COUNT(1) FROM backup_directories`).Scan(&m.ConfiguredDirectories)
 	return m, nil
 }
 
@@ -42,7 +44,7 @@ func (s *Store) GetDBBackupStatsMap(serverID int64) (map[string]DBBackupCounts, 
 		       SUM(CASE WHEN local_status = 'completed' AND deleted_local_at = '' THEN 1 ELSE 0 END) AS local_copies,
 		       SUM(CASE WHEN cloud_status = 'completed' AND deleted_cloud_at = '' THEN 1 ELSE 0 END) AS cloud_copies
 		FROM backup_executions
-		WHERE pg_server_id = ?
+		WHERE pg_server_id = ? AND target_type = 'database'
 		GROUP BY db_name`, serverID)
 	if err != nil {
 		return nil, err
@@ -66,9 +68,47 @@ func (s *Store) GetDBBackupStatsMap(serverID int64) (map[string]DBBackupCounts, 
 		_ = s.db.QueryRow(`
 			SELECT started_at, local_status, cloud_status
 			FROM backup_executions
-			WHERE pg_server_id = ? AND db_name = ?
+			WHERE pg_server_id = ? AND target_type = 'database' AND db_name = ?
 			ORDER BY id DESC LIMIT 1`, serverID, dbName).Scan(&c.LastBackupAt, &c.LastLocalStatus, &c.LastCloudStatus)
 		res[dbName] = c
+	}
+	return res, nil
+}
+
+func (s *Store) GetDirectoryBackupStatsMap() (map[int64]DBBackupCounts, error) {
+	rows, err := s.db.Query(`
+		SELECT directory_id,
+		       COUNT(1) AS total_copies,
+		       SUM(CASE WHEN local_status = 'completed' AND deleted_local_at = '' THEN 1 ELSE 0 END) AS local_copies,
+		       SUM(CASE WHEN cloud_status = 'completed' AND deleted_cloud_at = '' THEN 1 ELSE 0 END) AS cloud_copies
+		FROM backup_executions
+		WHERE target_type = 'directory' AND directory_id > 0
+		GROUP BY directory_id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	res := make(map[int64]DBBackupCounts)
+	for rows.Next() {
+		var dirID int64
+		var c DBBackupCounts
+		if err := rows.Scan(&dirID, &c.TotalCopies, &c.LocalCopies, &c.CloudCopies); err != nil {
+			return nil, err
+		}
+		res[dirID] = c
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	for dirID, c := range res {
+		_ = s.db.QueryRow(`
+			SELECT started_at, local_status, cloud_status
+			FROM backup_executions
+			WHERE target_type = 'directory' AND directory_id = ?
+			ORDER BY id DESC LIMIT 1`, dirID).Scan(&c.LastBackupAt, &c.LastLocalStatus, &c.LastCloudStatus)
+		res[dirID] = c
 	}
 	return res, nil
 }

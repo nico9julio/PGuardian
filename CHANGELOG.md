@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-16
+
+### Added
+- **MariaDB & MySQL Backup Support:** Native Go database connection inspector (`github.com/go-sql-driver/mysql`), automatic Windows discovery of `mariadb-dump.exe` and `mysqldump.exe`, streaming `.sql.gz` dumps (`--single-transaction --quick --routines --triggers --events --hex-blob`), isolated temporary `--defaults-extra-file` (`0600`) credentials, and automatic `--column-statistics=0` compatibility for Oracle MySQL 8.x/9.x clients.
+- **Streaming Directory & Folder Backups:** Added a dedicated **Directories** catalog (`DirectoriesView`) with live size/file count inspection, exclusion pattern chips (`node_modules`, `.git`, `*.tmp`, `*.log`, `~$*`), single-pass streaming `.zip` archiving with `SHA-256` checksums, Windows shared-read (`FILE_SHARE_READ|WRITE|DELETE`) handling, and graceful skipping of exclusively locked files with execution warnings.
+- **Unified Profile Target Types:** Extended Backup Profiles (`database` vs `directory`) and the Setup Wizard so PostgreSQL, MariaDB, MySQL, and Directory backups share Cron schedules, local/Google Drive retention, and real-time Windows Toast / Telegram alerts.
+
 ## [0.1.1] - 2026-11-11
 
 ### Added
@@ -32,6 +39,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Encrypted all stored credentials and API tokens at rest using machine-bound **Windows DPAPI (`CryptProtectData`)**.
 - Eliminated local TCP listeners in favor of ACL-restricted Windows Named Pipes with caller token SID verification.
 
-[Unreleased]: https://github.com/nico9julio/PGuardian/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/nico9julio/PGuardian/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/nico9julio/PGuardian/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/nico9julio/PGuardian/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/nico9julio/PGuardian/releases/tag/v0.1.0
