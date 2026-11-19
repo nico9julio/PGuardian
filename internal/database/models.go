@@ -180,9 +180,22 @@ type TelegramRecipient struct {
 	CreatedAt string `json:"createdAt"`
 }
 
+const (
+	SuccessModePerBackup   = "per_backup"
+	SuccessModeTaskSummary = "task_summary"
+)
+
+func NormalizeSuccessMode(mode string) string {
+	if strings.EqualFold(strings.TrimSpace(mode), SuccessModeTaskSummary) {
+		return SuccessModeTaskSummary
+	}
+	return SuccessModePerBackup
+}
+
 type NotificationRule struct {
 	Channel          string `json:"channel"` // "windows" | "telegram"
 	OnSuccess        bool   `json:"onSuccess"`
+	SuccessMode      string `json:"successMode"` // "per_backup" | "task_summary"
 	OnError          bool   `json:"onError"`
 	OnRetry          bool   `json:"onRetry"`
 	OnLowDisk        bool   `json:"onLowDisk"`

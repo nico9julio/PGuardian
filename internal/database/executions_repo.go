@@ -280,7 +280,7 @@ func (s *Store) DeleteTelegramRecipient(id int64) error {
 }
 
 func (s *Store) GetNotificationRules() ([]NotificationRule, error) {
-	rows, err := s.db.Query(`SELECT channel, on_success, on_error, on_retry, on_low_disk, daily_summary, daily_summary_time FROM notification_rules`)
+	rows, err := s.db.Query(`SELECT channel, on_success, success_mode, on_error, on_retry, on_low_disk, daily_summary, daily_summary_time FROM notification_rules`)
 	if err != nil {
 		return nil, err
 	}
@@ -289,10 +289,11 @@ func (s *Store) GetNotificationRules() ([]NotificationRule, error) {
 	for rows.Next() {
 		var r NotificationRule
 		var s1, e1, r1, l1, d1 int
-		if err := rows.Scan(&r.Channel, &s1, &e1, &r1, &l1, &d1, &r.DailySummaryTime); err != nil {
+		if err := rows.Scan(&r.Channel, &s1, &r.SuccessMode, &e1, &r1, &l1, &d1, &r.DailySummaryTime); err != nil {
 			return nil, err
 		}
 		r.OnSuccess = s1 == 1
+		r.SuccessMode = NormalizeSuccessMode(r.SuccessMode)
 		r.OnError = e1 == 1
 		r.OnRetry = r1 == 1
 		r.OnLowDisk = l1 == 1
@@ -309,13 +310,14 @@ func (s *Store) SaveNotificationRule(r NotificationRule) error {
 		}
 		return 0
 	}
+	mode := NormalizeSuccessMode(r.SuccessMode)
 	_, err := s.db.Exec(`
-		INSERT INTO notification_rules (channel, on_success, on_error, on_retry, on_low_disk, daily_summary, daily_summary_time)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO notification_rules (channel, on_success, success_mode, on_error, on_retry, on_low_disk, daily_summary, daily_summary_time)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(channel) DO UPDATE SET
-			on_success = excluded.on_success, on_error = excluded.on_error, on_retry = excluded.on_retry,
+			on_success = excluded.on_success, success_mode = excluded.success_mode, on_error = excluded.on_error, on_retry = excluded.on_retry,
 			on_low_disk = excluded.on_low_disk, daily_summary = excluded.daily_summary, daily_summary_time = excluded.daily_summary_time`,
-		r.Channel, b2i(r.OnSuccess), b2i(r.OnError), b2i(r.OnRetry), b2i(r.OnLowDisk), b2i(r.DailySummary), r.DailySummaryTime,
+		r.Channel, b2i(r.OnSuccess), mode, b2i(r.OnError), b2i(r.OnRetry), b2i(r.OnLowDisk), b2i(r.DailySummary), r.DailySummaryTime,
 	)
 	return err
 }

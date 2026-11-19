@@ -168,12 +168,26 @@ export const NotificationsView: React.FC = () => {
                 <tr key={r.channel}>
                   <td className="py-3 font-bold uppercase">{r.channel}</td>
                   <td className="py-3">
-                    <input
-                      type="checkbox"
-                      checked={r.onSuccess}
-                      onChange={(e) => updateRule({ ...r, onSuccess: e.target.checked })}
-                      className="accent-cyan-600"
-                    />
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={r.onSuccess}
+                        onChange={(e) => updateRule({ ...r, onSuccess: e.target.checked })}
+                        className="accent-cyan-600"
+                      />
+                      {r.onSuccess && (
+                        <select
+                          value={r.successMode || 'per_backup'}
+                          onChange={(e) =>
+                            updateRule({ ...r, successMode: e.target.value as 'per_backup' | 'task_summary' })
+                          }
+                          className="px-2 py-1 rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-[11px]"
+                        >
+                          <option value="per_backup">{t('notifSuccessPerBackup')}</option>
+                          <option value="task_summary">{t('notifSuccessTaskSummary')}</option>
+                        </select>
+                      )}
+                    </div>
                   </td>
                   <td className="py-3">
                     <input

@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-11-19
+
+### Added
+- **Task Completion Summary Mode:** Added a configurable `successMode` (`per_backup` vs `task_summary`) on notification rules (`NotificationsView`, SQLite migration `003_notification_success_mode.sql`, and `Dispatcher.NotifyTaskSummary`) so users can choose between receiving an alert per successful backup or a single consolidated summary at the end of a profile run.
+
+### Improved
+- **Clearer Telegram Notifications:** Daily summaries and task summaries now omit the red cross (`❌`) when there are zero errors and use clearer headers and human-readable byte/duration formatting.
+
 ## [0.2.0] - 2026-11-16
 
 ### Added

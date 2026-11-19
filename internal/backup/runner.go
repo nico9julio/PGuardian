@@ -80,12 +80,16 @@ func (e *Engine) RunProfile(ctx context.Context, profileID int64, triggerType st
 		return err
 	}
 
+	batchCtx := notify.WithBatchTask(ctx)
+	startedAt := time.Now()
+
 	if prof.TargetType == database.TargetDirectory {
 		targetDirs, err := e.resolveProfileDirectories(prof)
 		if err != nil {
 			e.dispatcher.NotifyBackupError("(directories)", prof.Name, err.Error(), 0)
 			return err
 		}
+		items := make([]notify.TaskBackupItem, 0, len(targetDirs))
 		for i := range targetDirs {
 			select {
 			case <-ctx.Done():
@@ -93,10 +97,20 @@ func (e *Engine) RunProfile(ctx context.Context, profileID int64, triggerType st
 			default:
 			}
 			d := targetDirs[i]
-			if _, err := e.ExecuteDirectoryBackup(ctx, prof, &d, triggerType); err != nil {
-				slog.Error("directory backup failed", "profile", prof.Name, "dir", d.Name, "error", err)
+			execID, execErr := e.ExecuteDirectoryBackup(batchCtx, prof, &d, triggerType)
+			if execErr != nil {
+				slog.Error("directory backup failed", "profile", prof.Name, "dir", d.Name, "error", execErr)
 			}
+			items = append(items, e.buildTaskBackupItem(d.Name, execID, execErr))
 		}
+		e.dispatcher.NotifyTaskSummary(notify.TaskSummary{
+			ProfileName:  prof.Name,
+			TriggerType:  triggerType,
+			TargetType:   prof.TargetType,
+			DriveEnabled: prof.DriveEnabled,
+			Duration:     time.Since(startedAt),
+			Items:        items,
+		})
 		return nil
 	}
 
@@ -111,17 +125,51 @@ func (e *Engine) RunProfile(ctx context.Context, profileID int64, triggerType st
 		return err
 	}
 
+	items := make([]notify.TaskBackupItem, 0, len(targetDBs))
 	for _, dbName := range targetDBs {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		default:
 		}
-		if _, err := e.ExecuteSingleBackup(ctx, prof, srv, pwd, dbName, triggerType); err != nil {
-			slog.Error("database backup failed", "profile", prof.Name, "db", dbName, "error", err)
+		execID, execErr := e.ExecuteSingleBackup(batchCtx, prof, srv, pwd, dbName, triggerType)
+		if execErr != nil {
+			slog.Error("database backup failed", "profile", prof.Name, "db", dbName, "error", execErr)
+		}
+		items = append(items, e.buildTaskBackupItem(dbName, execID, execErr))
+	}
+	e.dispatcher.NotifyTaskSummary(notify.TaskSummary{
+		ProfileName:  prof.Name,
+		TriggerType:  triggerType,
+		TargetType:   prof.TargetType,
+		DriveEnabled: prof.DriveEnabled,
+		Duration:     time.Since(startedAt),
+		Items:        items,
+	})
+	return nil
+}
+
+func (e *Engine) buildTaskBackupItem(targetName string, execID int64, execErr error) notify.TaskBackupItem {
+	item := notify.TaskBackupItem{
+		Name:    targetName,
+		Success: execErr == nil,
+	}
+	if execErr != nil {
+		item.Error = execErr.Error()
+	}
+	if execID > 0 {
+		if ex, err := e.store.GetExecution(execID); err == nil && ex != nil {
+			item.SizeBytes = ex.FileSizeBytes
+			item.Success = ex.LocalStatus == "completed"
+			item.CloudUploaded = ex.CloudStatus == "completed"
+			item.CloudPending = ex.CloudStatus == "retrying" || ex.CloudStatus == "pending"
+			item.Warning = ex.WarningMessage
+			if ex.ErrorMessage != "" && item.Error == "" {
+				item.Error = ex.ErrorMessage
+			}
 		}
 	}
-	return nil
+	return item
 }
 
 // RunManualDatabase triggers an immediate ad-hoc backup for a single database (using its assigned profile if any, or sensible defaults).
@@ -472,7 +520,7 @@ func (e *Engine) ExecuteSingleBackup(ctx context.Context, prof *database.BackupP
 		if prof.ID > 0 {
 			e.ApplyLocalRetention(prof.ID, database.TargetDatabase, 0, dbName, prof.LocalRetentionMode, prof.LocalRetentionValue)
 		}
-		e.dispatcher.NotifyBackupSuccess(dbName, prof.Name, sizeBytes, false, execID)
+		e.dispatcher.NotifyBackupSuccessCtx(ctx, dbName, prof.Name, sizeBytes, false, execID)
 		return execID, nil
 	}
 
@@ -581,7 +629,7 @@ func (e *Engine) ExecuteDirectoryBackup(ctx context.Context, prof *database.Back
 		if prof.ID > 0 {
 			e.ApplyLocalRetention(prof.ID, database.TargetDirectory, dir.ID, dir.Name, prof.LocalRetentionMode, prof.LocalRetentionValue)
 		}
-		e.dispatcher.NotifyBackupSuccessWithWarning(dir.Name, prof.Name, archRes.ArchiveSizeBytes, false, archRes.WarningSummary, execID)
+		e.dispatcher.NotifyBackupSuccessWithWarningCtx(ctx, dir.Name, prof.Name, archRes.ArchiveSizeBytes, false, archRes.WarningSummary, execID)
 		return execID, nil
 	}
 
@@ -763,7 +811,7 @@ func (e *Engine) UploadExecutionToCloud(ctx context.Context, execID int64) error
 		e.ApplyLocalRetention(prof.ID, ex.TargetType, ex.DirectoryID, ex.DBName, prof.LocalRetentionMode, prof.LocalRetentionValue)
 	}
 
-	e.dispatcher.NotifyBackupSuccessWithWarning(ex.DBName, ex.ProfileName, ex.FileSizeBytes, true, ex.WarningMessage, ex.ID)
+	e.dispatcher.NotifyBackupSuccessWithWarningCtx(ctx, ex.DBName, ex.ProfileName, ex.FileSizeBytes, true, ex.WarningMessage, ex.ID)
 	return nil
 }
 

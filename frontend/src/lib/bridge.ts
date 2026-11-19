@@ -154,6 +154,7 @@ export interface ServerUserSession {
 export interface NotificationRule {
   channel: 'windows' | 'telegram';
   onSuccess: boolean;
+  successMode?: 'per_backup' | 'task_summary';
   onError: boolean;
   onRetry: boolean;
   onLowDisk: boolean;
